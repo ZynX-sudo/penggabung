@@ -15,46 +15,79 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        id: setup-python # Tambahkan ID untuk referensi path Python
+        id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Konsisten dengan versi Anda
+          python-version: '3.10' # Pastikan versi ini konsisten
 
-      - name: Get Python Scripts Path
-        id: get-python-path # Dapatkan path Scripts Python
+      - name: Get Python Environment Details
+        id: get-python-env
         run: |
+          # Dapatkan path Python utama
           $pythonPath = "${{ steps.setup-python.outputs.python-path }}"
+          echo "PYTHON_EXE_PATH=$pythonPath" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8
+          
+          # Dapatkan path Scripts folder
           $scriptsPath = Join-Path (Split-Path $pythonPath -Parent) "Scripts"
           echo "PYTHON_SCRIPTS_PATH=$scriptsPath" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8
-          echo "Verifying Scripts Path: $scriptsPath"
+          
+          echo "--- Current Python Environment ---"
+          echo "Python Executable: $pythonPath"
+          echo "Python Scripts Dir: $scriptsPath"
+          echo "--- PATH Environment Variable ---"
+          Get-ChildItem Env:Path
+          echo "--- Contents of Python Scripts Directory ---"
           if (Test-Path $scriptsPath) {
-              echo "Scripts directory exists."
               Get-ChildItem $scriptsPath
           } else {
-              echo "Scripts directory DOES NOT exist at $scriptsPath."
+              echo "Error: Scripts directory does not exist at $scriptsPath."
               exit 1
           }
         shell: powershell
 
-      - name: Install dependencies including PyInstaller
-        # Gunakan Python yang spesifik dari setup-python
+      - name: Install dependencies including PyInstaller (Robust)
         run: |
-          "${{ steps.setup-python.outputs.python-path }}" -m pip install --upgrade pip
-          "${{ steps.setup-python.outputs.python-path }}" -m pip install -r requirements.txt
-          "${{ steps.setup-python.outputs.python-path }}" -m pip install pyinstaller
+          # Pastikan pip terupdate menggunakan executable Python yang tepat
+          "%PYTHON_EXE_PATH%" -m pip install --upgrade pip
           
-          # Verifikasi instalasi PyInstaller dengan detail
-          "${{ steps.setup-python.outputs.python-path }}" -m pip show pyinstaller
-          # Coba panggil PyInstaller langsung dari Scripts folder
-          & "${{ env.PYTHON_SCRIPTS_PATH }}\pyinstaller.exe" --version
+          # Instal semua dependensi dari requirements.txt
+          "%PYTHON_EXE_PATH%" -m pip install -r requirements.txt
           
-        shell: powershell # Pastikan menggunakan PowerShell untuk ini
+          # Instal pyinstaller dan coba paksa instalasi ulang jika ada masalah
+          echo "Attempting to install PyInstaller..."
+          "%PYTHON_EXE_PATH%" -m pip install --force-reinstall pyinstaller
+          
+          echo "--- Verifying PyInstaller Installation ---"
+          "%PYTHON_EXE_PATH%" -m pip show pyinstaller
+          
+          echo "--- Testing PyInstaller Execution ---"
+          # Coba panggil PyInstaller langsung dari Scripts folder yang kita identifikasi
+          # Ini adalah tes paling langsung untuk keberadaan pyinstaller.exe
+          if (Test-Path "%PYTHON_SCRIPTS_PATH%\pyinstaller.exe") {
+              echo "pyinstaller.exe found at: %PYTHON_SCRIPTS_PATH%\pyinstaller.exe"
+              "%PYTHON_SCRIPTS_PATH%\pyinstaller.exe" --version
+          } else {
+              echo "Error: pyinstaller.exe NOT found at expected path: %PYTHON_SCRIPTS_PATH%\pyinstaller.exe"
+              exit 1
+          }
+          
+        env:
+          PYTHON_EXE_PATH: ${{ env.PYTHON_EXE_PATH }} # Teruskan path Python EXE sebagai ENV var
+          PYTHON_SCRIPTS_PATH: ${{ env.PYTHON_SCRIPTS_PATH }} # Teruskan Scripts path sebagai ENV var
+        shell: cmd # Tetap gunakan cmd.exe untuk perintah pip/pyinstaller
 
       - name: Build executable with PyInstaller
-        # Panggil PyInstaller menggunakan jalur absolut atau melalui python -m
         run: |
-          "${{ steps.setup-python.outputs.python-path }}" -m pyinstaller --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool" penggabung.py
-        shell: powershell # Pastikan menggunakan PowerShell untuk ini
+          echo "--- Starting PyInstaller Build ---"
+          # Panggil PyInstaller menggunakan python -m sebagai metode paling andal
+          "%PYTHON_EXE_PATH%" -m pyinstaller --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool" penggabung.py
+          
+          echo "--- PyInstaller Build Completed ---"
+          echo "Checking dist directory contents:"
+          dir dist\PDFMergeTool # List isi folder output
+        env:
+          PYTHON_EXE_PATH: ${{ env.PYTHON_EXE_PATH }}
+        shell: cmd
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
