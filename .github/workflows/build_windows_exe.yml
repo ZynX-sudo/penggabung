@@ -41,7 +41,7 @@ jobs:
         # Nama aplikasi output akan menjadi PDFMergeTool
         
         # Pastikan "ico.ico" ada di root repositori Anda
-        pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
+        pyinstaller penggabung.py --onefile --noconsole --windowed --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Upload executable as Artifact # Langkah 5: Mengunggah folder .exe sebagai "Artifact"
