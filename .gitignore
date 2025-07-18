@@ -1,0 +1,27 @@
+# Python generated files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# PyInstaller build products
+build/
+dist/
+*.spec
+
+# Virtual environment (if used)
+venv/
+.env/
+
+# IDE specific files (adjust as per your IDE, common ones included)
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Application specific output folder
+PROSES_OUTPUT/
+
+# Operating System generated files
+.DS_Store
+Thumbs.db
