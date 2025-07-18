@@ -29,13 +29,14 @@ jobs:
           # Menambahkan --break-system-packages (untuk Python 3.11+) atau --user (untuk Python lama)
           # bisa membantu jika ada masalah izin di lingkungan runner, tapi umumnya tidak perlu.
           pip install pyinstaller
+          pip install PyQt6
 
       # Bagian ini dihapus karena PDFTK.exe sudah di repositori.
 
       - name: Build executable with PyInstaller
         # Pastikan PyInstaller dipanggil dengan `python -m` untuk menghindari masalah PATH
         run: |
-          python -m pyinstaller --noconsole --onefile --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool" penggabung.py
+          python -m pyinstaller --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool" penggabung.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
