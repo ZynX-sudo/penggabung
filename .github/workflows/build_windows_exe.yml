@@ -1,67 +1,61 @@
-name: Build Windows Executable
+name: Build Windows Executable # Nama workflow yang akan muncul di tab Actions
 
 on:
   push:
     branches:
-      - main
-  workflow_dispatch:
+      - main # Workflow akan berjalan setiap kali ada push ke branch 'main'
+  workflow_dispatch: # Ini memungkinkan Anda menjalankan workflow secara manual dari GitHub UI
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-latest # Menggunakan mesin virtual Windows terbaru dari GitHub
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout Code # Langkah 1: Mengambil kode proyek Anda
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        id: setup-python # Tambahkan ID untuk referensi path Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10' # Konsisten dengan versi Anda
+    - name: Set up Python # Langkah 2: Mengatur versi Python yang akan digunakan
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10' # Disarankan pakai 3.10 atau versi terbaru yang Anda gunakan
 
-      - name: Get Python Scripts Path (using PowerShell)
-        id: get-python-path # Dapatkan path Scripts Python
-        run: |
-          $pythonPath = "${{ steps.setup-python.outputs.python-path }}"
-          $scriptsPath = Join-Path (Split-Path $pythonPath -Parent) "Scripts"
-          echo "PYTHON_SCRIPTS_PATH=$scriptsPath" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8
-          echo "Verifying Scripts Path: $scriptsPath"
-          if (Test-Path $scriptsPath) {
-              echo "Scripts directory exists."
-              Get-ChildItem $scriptsPath
-          } else {
-              echo "Scripts directory DOES NOT exist at $scriptsPath."
-              exit 1
-          }
-        shell: powershell # Pertahankan PowerShell di sini karena ini adalah PowerShell scripting
+    - name: Install dependencies # Langkah 3: Menginstal semua library yang dibutuhkan
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt # Menginstal dari file requirements.txt Anda
+        pip install pyinstaller # Memastikan pyinstaller terinstal
+        pip install PyQt6 # Memastikan PyQt6 terinstal
+      shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
-      - name: Install dependencies including PyInstaller (using CMD)
-        # Ubah shell menjadi cmd untuk perintah pip/python yang lebih sederhana
-        run: |
-          "%PYTHON_PATH%" -m pip install --upgrade pip
-          "%PYTHON_PATH%" -m pip install -r requirements.txt
-          "%PYTHON_PATH%" -m pip install pyinstaller
-          
-          # Verifikasi instalasi PyInstaller dengan detail
-          "%PYTHON_PATH%" -m pip show pyinstaller
-          # Coba panggil PyInstaller langsung dari Scripts folder
-          "%PYTHON_SCRIPTS_PATH%\pyinstaller.exe" --version
-        env:
-          PYTHON_PATH: ${{ steps.setup-python.outputs.python-path }} # Teruskan path Python sebagai ENV var
-          PYTHON_SCRIPTS_PATH: ${{ env.PYTHON_SCRIPTS_PATH }} # Teruskan Scripts path sebagai ENV var
-        shell: cmd # GANTI: Gunakan cmd.exe di sini!
+    - name: Build with PyInstaller # Langkah 4: Menjalankan proses kompilasi PyInstaller
+      run: |
+        # Membangun aplikasi sebagai 'one-folder bundle' (tanpa --onefile)
+        # Menyertakan PDFTK.exe yang sudah ada di root repositori
+        # Nama aplikasi output akan menjadi PDFMergeTool
+        pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool"
+      shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
-      - name: Build executable with PyInstaller (using CMD)
-        # Ubah shell menjadi cmd
-        run: |
-          "%PYTHON_PATH%" -m pyinstaller --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool" penggabung.py
-        env:
-          PYTHON_PATH: ${{ steps.setup-python.outputs.python-path }} # Teruskan path Python sebagai ENV var
-        shell: cmd # GANTI: Gunakan cmd.exe di sini!
+    - name: Upload executable as Artifact # Langkah 5: Mengunggah folder .exe sebagai "Artifact"
+      uses: actions/upload-artifact@v4
+      with:
+        name: PDFMergeTool-Windows-Executables # Nama untuk artefak yang akan Anda unduh
+        path: dist/PDFMergeTool/ # Path ke folder .exe yang dihasilkan oleh PyInstaller
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PDFMergeTool-Windows-Executables
-          path: dist/PDFMergeTool/
+    - name: Create GitHub Release # Langkah 6: Membuat Rilis di GitHub (Opsional, tapi disarankan)
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      # Langkah ini HANYA akan berjalan jika Anda mendorong sebuah "tag" ke GitHub
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        tag_name: ${{ github.ref_name }} # Mengambil nama tag (misal: v1.0.0)
+        name: Rilis Aplikasi Penggabung PDF ${{ github.ref_name }} # Judul rilis
+        body: | # Deskripsi rilis
+          Versi terbaru aplikasi Penggabung PDF Anda untuk Windows.
+          Silakan unduh file executable di bawah.
+        draft: false # Bukan rilis draft
+        prerelease: false # Bukan rilis pratinjau
+        files: dist/PDFMergeTool/* # Melampirkan semua file di dalam folder output ke rilis ini
+        # Catatan: 'files' di action-gh-release mendukung wildcard.
+        # Jika Anda ingin mengunggah seluruh folder sebagai satu ZIP, Anda mungkin perlu langkah tambahan
+        # untuk mengkompresnya terlebih dahulu, atau mengunggah artefak ZIP dari langkah sebelumnya.
+        # Untuk saat ini, ini akan melampirkan semua file individual dari folder tersebut.
