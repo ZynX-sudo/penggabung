@@ -43,7 +43,11 @@ jobs:
         # Contoh lengkap PyInstaller command, sesuaikan dengan file Anda:
         # Jika Anda punya icon di root repo (misal: "my_app_icon.ico")
         # dan libiconv2.dll di root repo
+<<<<<<< HEAD
         # pyinstaller penggabung.py --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
+=======
+        # pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
+>>>>>>> ce80dc90c2146b830109329ee1ac38dcd8a462c9
         
         # Jika tidak ada icon atau libiconv2.dll di root, gunakan yang sederhana ini:
         pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool"
@@ -67,4 +71,8 @@ jobs:
           Silakan unduh file executable di bawah.
         draft: false # Bukan rilis draft
         prerelease: false # Bukan rilis pratinjau
+<<<<<<< HEAD
         files: dist/PDFMergeTool/* # Melampirkan semua file di dalam folder output ke rilis ini
+=======
+        files: dist/PDFMergeTool/* # Melampirkan semua file di dalam folder output ke rilis ini
+>>>>>>> ce80dc90c2146b830109329ee1ac38dcd8a462c9

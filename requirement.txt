@@ -1,2 +1,3 @@
+PyQt6
 pyinstaller
-pyqt6
+libiconv2.dll
