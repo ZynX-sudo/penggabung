@@ -19,10 +19,10 @@ jobs:
       with:
         python-version: '3.10' # Disarankan pakai 3.10 atau versi terbaru yang Anda gunakan
 
-    - name: Debug requirements.txt content # BARU: Langkah untuk mencetak isi requirements.txt
+    - name: Debug requirement.txt content # BARU: Langkah untuk mencetak isi requirements.txt
       run: |
-        echo "--- Contents of requirements.txt ---"
-        type requirements.txt
+        echo "--- Contents of requirement.txt ---"
+        type requirement.txt
         echo "------------------------------------"
       shell: cmd # Menggunakan CMD untuk perintah 'type'
 
