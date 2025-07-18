@@ -17,18 +17,23 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Anda bisa ganti ini dengan versi Python 3.x yang Anda inginkan
+          python-version: '3.10' # Pastikan ini konsisten dengan versi yang Anda inginkan
 
       - name: Install dependencies
         run: |
+          # Pastikan pip terupdate
           python -m pip install --upgrade pip
+          # Instal semua dependensi dari requirements.txt
           pip install -r requirements.txt
-          pip install pyinstaller # PyInstaller diinstal terpisah untuk memastikan
+          # Instal pyinstaller secara eksplisit.
+          # Menambahkan --break-system-packages (untuk Python 3.11+) atau --user (untuk Python lama)
+          # bisa membantu jika ada masalah izin di lingkungan runner, tapi umumnya tidak perlu.
+          pip install pyinstaller
 
-      # Karena PDFTK.exe sudah ada di repositori, langkah download tidak diperlukan.
+      # Bagian ini dihapus karena PDFTK.exe sudah di repositori.
 
       - name: Build executable with PyInstaller
-        # PDFTK.exe sudah di-checkout di root folder kerja bersama kode Anda.
+        # Pastikan PyInstaller dipanggil dengan `python -m` untuk menghindari masalah PATH
         run: |
           python -m pyinstaller --noconsole --onefile --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool" penggabung.py
 
