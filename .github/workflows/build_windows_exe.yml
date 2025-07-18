@@ -44,12 +44,6 @@ jobs:
         # Jika Anda punya icon di root repo (misal: "my_app_icon.ico")
         # dan libiconv2.dll di root repo
 <<<<<<< HEAD
-        # pyinstaller penggabung.py --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
-=======
-        # pyinstaller penggabung.py --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
->>>>>>> ce80dc90c2146b830109329ee1ac38dcd8a462c9
-        
-        # Jika tidak ada icon atau libiconv2.dll di root, gunakan yang sederhana ini:
         pyinstaller penggabung.py --add-binary "PDFTK.exe;." --name "PDFMergeTool"
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
