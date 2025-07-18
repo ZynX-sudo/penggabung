@@ -46,11 +46,11 @@ jobs:
 <<<<<<< HEAD
         # pyinstaller penggabung.py --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
 =======
-        # pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
+        # pyinstaller penggabung.py --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
 >>>>>>> ce80dc90c2146b830109329ee1ac38dcd8a462c9
         
         # Jika tidak ada icon atau libiconv2.dll di root, gunakan yang sederhana ini:
-        pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool"
+        pyinstaller penggabung.py --add-binary "PDFTK.exe;." --name "PDFMergeTool"
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Upload executable as Artifact # Langkah 5: Mengunggah folder .exe sebagai "Artifact"
