@@ -21,38 +21,33 @@ jobs:
 
       - name: Verify Python and Pip Paths
         run: |
-          # Cetak lokasi python
           Get-Command python
-          # Cetak lokasi pip
           Get-Command pip
-          # Cetak isi PATH
           Get-ChildItem Env:Path
-
-        shell: powershell # Gunakan PowerShell untuk perintah di atas
+        shell: powershell
 
       - name: Install dependencies including PyInstaller
         run: |
-          # Pastikan pip terupdate
           python -m pip install --upgrade pip
-          # Instal semua dependensi dari requirements.txt
           pip install -r requirements.txt
-          # Instal pyinstaller secara eksplisit dan VERIFIKASI instalasinya
           python -m pip install pyinstaller
-          # Verifikasi bahwa pyinstaller sudah terinstal dan lokasinya
           python -m pip show pyinstaller
-          # Coba jalankan versi pyinstaller
           python -m pyinstaller --version
-        # Tambahkan shell powershell untuk konsistensi, atau biarkan default (cmd)
-        # jika itu lebih cocok untuk runner Windows. Default biasanya berfungsi baik.
-        # shell: powershell # Uncomment jika perlu
 
       - name: Build executable with PyInstaller
-        # Pastikan PyInstaller dipanggil dengan `python -m`
+        # Hapus opsi '--onefile' di sini untuk membuat folder bundle
         run: |
           python -m pyinstaller --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool" penggabung.py
+          # Catatan: Ketika tidak menggunakan --onefile, PyInstaller akan membuat folder
+          # dengan nama yang sama seperti --name (e.g., dist/PDFMergeTool/)
+          # dan executable-nya akan ada di dalamnya (e.g., dist/PDFMergeTool/PDFMergeTool.exe)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: PDFMergeTool-Windows-Executables
-          path: dist/PDFMergeTool.exe
+          # Path perlu diubah untuk mengupload folder hasil build
+          path: dist/PDFMergeTool/ # Unggah seluruh folder yang dibuat oleh PyInstaller
+          # Jika Anda ingin mengunggah seluruh folder dist, gunakan:
+          # path: dist/
+          # Namun, lebih baik spesifik ke folder aplikasi Anda
