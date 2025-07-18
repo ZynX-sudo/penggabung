@@ -22,9 +22,9 @@ jobs:
     - name: Install dependencies # Langkah 3: Menginstal semua library yang dibutuhkan
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt # Menginstal dari file requirements.txt Anda
-        pip install pyinstaller # Memastikan pyinstaller terinstal
-        pip install PyQt6 # Memastikan PyQt6 terinstal
+        pip install -r requirements.txt
+        pip install pyinstaller
+        pip install PyQt6
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Build with PyInstaller # Langkah 4: Menjalankan proses kompilasi PyInstaller
