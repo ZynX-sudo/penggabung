@@ -19,6 +19,13 @@ jobs:
       with:
         python-version: '3.10' # Disarankan pakai 3.10 atau versi terbaru yang Anda gunakan
 
+    - name: Debug requirements.txt content # BARU: Langkah untuk mencetak isi requirements.txt
+      run: |
+        echo "--- Contents of requirements.txt ---"
+        type requirements.txt
+        echo "------------------------------------"
+      shell: cmd # Menggunakan CMD untuk perintah 'type'
+
     - name: Install dependencies # Langkah 3: Menginstal semua library yang dibutuhkan
       run: |
         python -m pip install --upgrade pip
@@ -32,6 +39,13 @@ jobs:
         # Membangun aplikasi sebagai 'one-folder bundle' (tanpa --onefile)
         # Menyertakan PDFTK.exe yang sudah ada di root repositori
         # Nama aplikasi output akan menjadi PDFMergeTool
+        
+        # Contoh lengkap PyInstaller command, sesuaikan dengan file Anda:
+        # Jika Anda punya icon di root repo (misal: "my_app_icon.ico")
+        # dan libiconv2.dll di root repo
+        # pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --add-binary "libiconv2.dll;." --icon="ico.ico" --name "PDFMergeTool"
+        
+        # Jika tidak ada icon atau libiconv2.dll di root, gunakan yang sederhana ini:
         pyinstaller penggabung.py --noconsole --windowed --add-binary "PDFTK.exe;." --name "PDFMergeTool"
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
@@ -44,7 +58,6 @@ jobs:
     - name: Create GitHub Release # Langkah 6: Membuat Rilis di GitHub (Opsional, tapi disarankan)
       id: create_release
       uses: softprops/action-gh-release@v1
-      # Langkah ini HANYA akan berjalan jika Anda mendorong sebuah "tag" ke GitHub
       if: startsWith(github.ref, 'refs/tags/')
       with:
         tag_name: ${{ github.ref_name }} # Mengambil nama tag (misal: v1.0.0)
@@ -55,7 +68,3 @@ jobs:
         draft: false # Bukan rilis draft
         prerelease: false # Bukan rilis pratinjau
         files: dist/PDFMergeTool/* # Melampirkan semua file di dalam folder output ke rilis ini
-        # Catatan: 'files' di action-gh-release mendukung wildcard.
-        # Jika Anda ingin mengunggah seluruh folder sebagai satu ZIP, Anda mungkin perlu langkah tambahan
-        # untuk mengkompresnya terlebih dahulu, atau mengunggah artefak ZIP dari langkah sebelumnya.
-        # Untuk saat ini, ini akan melampirkan semua file individual dari folder tersebut.
