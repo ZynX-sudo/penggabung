@@ -36,19 +36,14 @@ jobs:
 
     - name: Build with PyInstaller # Langkah 4: Menjalankan proses kompilasi PyInstaller
       run: |
-        # Membangun aplikasi sebagai 'one-folder bundle' (tanpa --onefile)
-        # Menyertakan PDFTK.exe dan libiconv2.dll yang sudah ada di root repositori
-        # Nama aplikasi output akan menjadi PDFMergeTool
-        
-        # Pastikan "ico.ico" ada di root repositori Anda
-        pyinstaller penggabung.py --noconsole --windowed --icon="casemix.ico" --name "PDF File Merger"
+          pyinstaller penggabung.py --noconsole --windowed --icon="casemix.ico" --name "PDF_File_Merger"
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Upload executable as Artifact # Langkah 5: Mengunggah folder .exe sebagai "Artifact"
       uses: actions/upload-artifact@v4
       with:
         name: PDFMergeTool-Windows-Executables # Nama untuk artefak yang akan Anda unduh
-        path: dist/PDF File Merger/ # Path ke folder .exe yang dihasilkan oleh PyInstaller
+        path: dist/PDF_File_Merger/ # Path ke folder .exe yang dihasilkan oleh PyInstaller
 
     - name: Create GitHub Release # Langkah 6: Membuat Rilis di GitHub (Opsional, tapi disarankan)
       id: create_release
@@ -63,4 +58,4 @@ jobs:
           Silakan unduh file executable di bawah.
         draft: false # Bukan rilis draft
         prerelease: false # Bukan rilis pratinjau
-        files: dist/PDF File Merger/ # Melampirkan semua file di dalam folder output ke rilis ini
+        files: dist/PDF_File_Merger/ # Melampirkan semua file di dalam folder output ke rilis ini
