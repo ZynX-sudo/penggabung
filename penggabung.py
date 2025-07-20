@@ -17,7 +17,7 @@ from pypdf import PdfWriter, PdfReader
 def extract_prefix_and_number(filename):
     """
     Mengekstrak prefiks (nama depan) dan angka urutan dari nama file.
-    Prefiks adalah bagian nama file sebelum pola ' [opsional_karakter](angka)' atau '_angka'.
+    Prefiks adalah bagian naama file sebelum pola ' [opsional_karakter](angka)' atau '_angka'.
     Angka diekstrak dari dalam tanda kurung atau setelah underscore.
     Mengembalikan tuple: (prefiks_huruf_kecil, angka_sebagai_int_atau_None, nama_dasar_asli_huruf_kecil).
     """
