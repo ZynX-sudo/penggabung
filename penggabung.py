@@ -11,50 +11,49 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QTextEdit, QSizePolicy, QScrollArea
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDateTime, QTimer
+from PyQt6.QtGui import QIcon # Import QIcon for setting application icon
 from pypdf import PdfWriter, PdfReader
 
 # Helper function to extract prefix and number from a filename
 def extract_prefix_and_number(filename):
     """
     Mengekstrak prefiks (nama depan) dan angka urutan dari nama file.
-    Prefiks adalah bagian naama file sebelum pola ' [opsional_karakter](angka)' atau '_angka'.
-    Angka diekstrak dari dalam tanda kurung atau setelah underscore.
+    Prefiks adalah bagian naama file sebelum pola ' [opsional_karakter](angka)', '_angka',
+    atau ' angka' di akhir.
+    Angka diekstrak dari dalam tanda kurung atau setelah underscore atau setelah spasi.
     Mengembalikan tuple: (prefiks_huruf_kecil, angka_sebagai_int_atau_None, nama_dasar_asli_huruf_kecil).
     """
     base_name = os.path.splitext(filename)[0] # Dapatkan nama dasar tanpa ekstensi
     base_name_lower = base_name.lower() # Konversi ke huruf kecil untuk pencocokan yang tidak peka huruf besar/kecil
 
-    # Regex baru untuk menemukan:
-    # 1. ' [karakter_opsional_sebelum_kurung](angka)' di akhir (misalnya, 'file a(1)', 'file (1)', 'file_new (2)')
-    #    \s* : nol atau lebih spasi
-    #    ([a-z0-9_.-]*)          : nol atau lebih karakter alfanumerik, underscore, titik, atau strip (ini menangkap 'a' atau 'new' dll)
-    #    \((\d+)\)$              : tanda kurung literal yang mengapit satu atau lebih digit, di akhir string
+    # Pola 1: ' [karakter_opsional_sebelum_kurung](angka)' di akhir (misalnya, 'file a(1)', 'file (1)')
     match_paren_with_char = re.search(r'\s*([a-z0-9_.-]*)\((\d+)\)$', base_name_lower)
     
-    # Pola lama untuk '_angka' tetap dipertahankan
-    match_underscore = re.search(r'(_(\d+))$', base_name_lower) 
+    # Pola 2: '_angka' di akhir (misalnya, 'file_1')
+    match_underscore = re.search(r'(_(\d+))$', base_name_lower)
+
+    # Pola 3: ' angka' di akhir (misalnya, 'file 1')
+    match_space_number = re.search(r'\s(\d+)$', base_name_lower)
 
     if match_paren_with_char:
-        # group(1) akan menjadi karakter tambahan (misal 'a'), group(2) akan menjadi angka
-        # Kita hanya butuh angkanya, prefiks akan dihitung dari awal hingga sebelum bagian yang cocok
         number_str = match_paren_with_char.group(2)
-        # Prefiks adalah bagian dari base_name_lower sebelum sufiks yang cocok
-        # match_paren_with_char.start() akan mengembalikan indeks di mana pola regex dimulai,
-        # yaitu sebelum spasi atau karakter tambahan sebelum kurung.
         prefix = base_name_lower[:match_paren_with_char.start()]
-        
-        # Hapus spasi di akhir prefiks jika ada
-        prefix = prefix.rstrip(' ')
+        prefix = prefix.rstrip(' ') # Hapus spasi di akhir prefiks jika ada
         return prefix, int(number_str), base_name_lower
     elif match_underscore:
         number_str = match_underscore.group(2)
         prefix = base_name_lower[:match_underscore.start(1)]
         return prefix, int(number_str), base_name_lower
+    elif match_space_number: # Tangani pola baru
+        number_str = match_space_number.group(1)
+        prefix = base_name_lower[:match_space_number.start(1) - 1] # -1 untuk menghilangkan spasi sebelum angka
+        prefix = prefix.rstrip(' ') # Pastikan tidak ada spasi sisa di akhir prefiks
+        return prefix, int(number_str), base_name_lower
     else:
         # Tidak ditemukan angka, seluruh base_name_lower adalah prefiks, angka adalah None
         return base_name_lower, None, base_name_lower
 
-# --- PdfMergerThread ---
+# PdfMergerThread Class
 class PdfMergerThread(QThread):
     # Sinyal untuk komunikasi UI
     progress_signal = pyqtSignal(int)
@@ -124,19 +123,15 @@ class PdfMergerThread(QThread):
                         if prefix not in primary_files_for_matching:
                             # Jika prefiks belum ada, tambahkan file ini sebagai kandidat utama
                             primary_files_for_matching[prefix] = file_path
-                            # self._log(f"Ditemukan Utama: '{file}'") # Baris ini dikomentari/dihapus
                         else:
                             current_candidate_path = primary_files_for_matching[prefix]
                             _, current_candidate_number, _ = extract_prefix_and_number(os.path.basename(current_candidate_path))
 
                             if number is None and current_candidate_number is not None:
-                                # self._log(f"Mengganti kandidat utama untuk prefiks '{prefix}'. Sebelumnya: '{os.path.basename(current_candidate_path)}', Sekarang: '{file}' (Tanpa nomor lebih diutamakan).") # Baris ini dikomentari/dihapus
                                 primary_files_for_matching[prefix] = file_path
                             elif number is not None and current_candidate_number is None:
-                                # self._log(f"Mempertahankan kandidat utama untuk prefiks '{prefix}': '{os.path.basename(current_candidate_path)}' (Tanpa nomor lebih diutamakan). Melewatkan: '{file}'.") # Baris ini dikomentari/dihapus
                                 pass # Pertahankan logika tapi hilangkan log
                             else:
-                                # self._log(f"Beberapa file utama dengan prefiks '{prefix}'. Menggunakan: '{os.path.basename(primary_files_for_matching[prefix])}'. Melewatkan: '{file}'.") # Baris ini dikomentari/dihapus
                                 pass # Pertahankan logika tapi hilangkan log
 
 
@@ -158,7 +153,6 @@ class PdfMergerThread(QThread):
                                 'number': number,
                                 'original_base_name_lower': original_base_name_lower
                             })
-                            # self._log(f"Ditemukan Tambahan: '{file}'") # Baris ini dikomentari/dihapus
             elif self.additional_folder:
                 self._log(f"Peringatan: Folder Tambahan '{self.additional_folder}' tidak ditemukan atau bukan direktori. Hanya akan memproses file berpasangan jika folder ini ada.")
 
@@ -194,7 +188,7 @@ class PdfMergerThread(QThread):
 
             if not files_to_merge_pairs:
                 self._log("Tidak ada pasangan file PDF yang ditemukan untuk digabungkan.")
-                self._log("Pastikan file di Folder Utama memiliki nama depan yang sama dengan file di Folder Tambahan (sebelum '_' atau ' (angka)' atau ' a(angka)').")
+                self._log("Pastikan file di Folder Utama memiliki nama depan yang sama dengan file di Folder Tambahan (sebelum '_' atau ' (angka)' atau ' angka').")
                 # Laporkan file yang dilewati jika tidak ada yang diproses sama sekali
                 if skipped_primary_files:
                     self._log("\n--- Ringkasan File Utama yang Dilewati (Tidak Ada Pasangan): ---")
@@ -210,7 +204,7 @@ class PdfMergerThread(QThread):
 
             # Buat folder output baru dengan timestamp di direktori induk folder utama
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_folder_name = f"Hasil Penggabungan" # Menambahkan timestamp ke nama folder
+            output_folder_name = f"Hasil Penggabungan" # Nama folder
             self.final_output_folder_path = os.path.join(self.output_base_dir, output_folder_name)
             
             os.makedirs(self.final_output_folder_path, exist_ok=True)
@@ -222,23 +216,25 @@ class PdfMergerThread(QThread):
 
             self._log("--- Memulai Penggabungan Pasangan File ---")
             for primary_file_path, additional_file_paths_list in files_to_merge_pairs:
-                # Nama file output akan sama dengan nama file utama
+                # Nama file output AKAN SELALU sama dengan nama file utama
+                # Kita tidak lagi menambahkan angka dari file tambahan ke nama output.
                 output_filename = os.path.basename(primary_file_path)
                 output_filepath = os.path.join(self.final_output_folder_path, output_filename)
-
+                
                 merger = PdfWriter()
                 
                 try:
                     self._log(f"Menggabungkan '{os.path.basename(primary_file_path)}' dengan {len(additional_file_paths_list)} file tambahan.")
+                    self._log(f"Nama file output yang direncanakan: '{output_filename}'") # Log ini akan menunjukkan nama file utama saja
                     
                     # Tambahkan file utama terlebih dahulu
                     merger.append(primary_file_path) 
-                    self._log(f"file utama    : {os.path.basename(primary_file_path)}'")
+                    self._log(f"file utama        : {os.path.basename(primary_file_path)}'")
                     
                     # Kemudian tambahkan semua file tambahan yang cocok dan terurut
                     for ad_path in additional_file_paths_list:
                         merger.append(ad_path) 
-                        self._log(f"file tambahan : {os.path.basename(ad_path)}'")
+                        self._log(f"file tambahan     : {os.path.basename(ad_path)}'")
                     
                     self._log(f"Menyimpan hasil ke {os.path.basename(output_filepath)}'")
                     merger.write(output_filepath)
@@ -276,7 +272,7 @@ class PdfMergerThread(QThread):
             self._log(f"--- Terjadi Kesalahan Fatal Selama Proses: {e} ---")
             self.finished_signal.emit(False, f"Terjadi kesalahan: {e}", "")
 
-# --- PdfMergerApp ---
+# PdfMergerApp Class
 class PdfMergerApp(QWidget):
     def __init__(self):
         super().__init__()
@@ -297,6 +293,17 @@ class PdfMergerApp(QWidget):
         """
         Menginisialisasi elemen-elemen antarmuka pengguna (UI).
         """
+        # --- Set Application Icon ---
+        # Ganti 'icon.ico' dengan nama file ikon Anda.
+        # Pastikan file ikon (misalnya icon.ico atau icon.png) berada di direktori yang sama dengan skrip ini.
+        # Jika menggunakan .png, pastikan PyQt6 dapat membacanya. .ico lebih direkomendasikan untuk Windows.
+        icon_path = 'casemix.ico' 
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        else:
+            print(f"Peringatan: File ikon tidak ditemukan di {icon_path}. Aplikasi akan menggunakan ikon default.")
+        # --- End Set Application Icon ---
+
         # Gaya CSS untuk aplikasi
         self.setStyleSheet("""
             QWidget {
@@ -366,6 +373,7 @@ class PdfMergerApp(QWidget):
                 background: #555555;
                 min-height: 20px;
                 border-radius: 5px;
+                border: none; /* Tambahkan ini agar handle tidak memiliki border */
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 border: none;
@@ -420,7 +428,7 @@ class PdfMergerApp(QWidget):
 
         # Layout untuk pemilihan folder utama
         primary_folder_layout = QHBoxLayout()
-        primary_folder_layout.addWidget(QLabel("Folder Utama PDF       :"))
+        primary_folder_layout.addWidget(QLabel("Folder Utama PDF        :"))
         self.primary_path_display = QLineEdit()
         self.primary_path_display.setReadOnly(True)
         self.primary_path_display.setPlaceholderText("Pilih folder basis file PDF (wajib)...")
@@ -644,20 +652,10 @@ class PdfMergerApp(QWidget):
         # Aktifkan kembali tombol setelah proses selesai
         self.start_button.setEnabled(True)
         self.primary_button.setEnabled(True)
-        self.additional_button.setEnabled(True)
-        
-    def open_output_folder(self, path):
-        """
-        Membuka folder output di explorer file sistem.
-        """
-        if sys.platform == "win32":
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
-        else: # Linux dan lainnya
-            subprocess.Popen(["xdg-open", path])
+        self.additional_button.setEnabled(True) # Aktifkan kembali tombol folder tambahan juga
 
-if __name__ == '__main__':
+# --- Main application execution ---
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = PdfMergerApp()
     window.show()
