@@ -3,7 +3,7 @@ import os
 import datetime
 import shutil
 import subprocess
-import re # Import the regex module for regular expressions
+import re
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton,
@@ -11,8 +11,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QTextEdit, QSizePolicy, QScrollArea
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDateTime, QTimer
-from PyQt6.QtGui import QIcon # Import QIcon for setting application icon
+from PyQt6.QtGui import QIcon
 from pypdf import PdfWriter, PdfReader
+from pypdf.errors import PdfReadError
 
 # Helper function to extract prefix and number from a filename
 def extract_prefix_and_number(filename):
@@ -23,51 +24,50 @@ def extract_prefix_and_number(filename):
     Angka diekstrak dari dalam tanda kurung atau setelah underscore atau setelah spasi.
     Mengembalikan tuple: (prefiks_huruf_kecil, angka_sebagai_int_atau_None, nama_dasar_asli_huruf_kecil).
     """
-    base_name = os.path.splitext(filename)[0] # Dapatkan nama dasar tanpa ekstensi
-    base_name_lower = base_name.lower() # Konversi ke huruf kecil untuk pencocokan yang tidak peka huruf besar/kecil
+    base_name = os.path.splitext(filename)[0]
+    base_name_lower = base_name.lower()
 
-    # Pola 1: ' [karakter_opsional_sebelum_kurung](angka)' di akhir (misalnya, 'file a(1)', 'file (1)')
     match_paren_with_char = re.search(r'\s*([a-z0-9_.-]*)\((\d+)\)$', base_name_lower)
-    
-    # Pola 2: '_angka' di akhir (misalnya, 'file_1')
     match_underscore = re.search(r'(_(\d+))$', base_name_lower)
-
-    # Pola 3: ' angka' di akhir (misalnya, 'file 1')
     match_space_number = re.search(r'\s(\d+)$', base_name_lower)
 
     if match_paren_with_char:
         number_str = match_paren_with_char.group(2)
         prefix = base_name_lower[:match_paren_with_char.start()]
-        prefix = prefix.rstrip(' ') # Hapus spasi di akhir prefiks jika ada
+        prefix = prefix.rstrip(' ')
         return prefix, int(number_str), base_name_lower
     elif match_underscore:
         number_str = match_underscore.group(2)
         prefix = base_name_lower[:match_underscore.start(1)]
         return prefix, int(number_str), base_name_lower
-    elif match_space_number: # Tangani pola baru
+    elif match_space_number:
         number_str = match_space_number.group(1)
-        prefix = base_name_lower[:match_space_number.start(1) - 1] # -1 untuk menghilangkan spasi sebelum angka
-        prefix = prefix.rstrip(' ') # Pastikan tidak ada spasi sisa di akhir prefiks
+        prefix = base_name_lower[:match_space_number.start(1) - 1]
+        prefix = prefix.rstrip(' ')
         return prefix, int(number_str), base_name_lower
     else:
-        # Tidak ditemukan angka, seluruh base_name_lower adalah prefiks, angka adalah None
         return base_name_lower, None, base_name_lower
 
 # PdfMergerThread Class
 class PdfMergerThread(QThread):
-    # Sinyal untuk komunikasi UI
     progress_signal = pyqtSignal(int)
     status_signal = pyqtSignal(str)
     log_signal = pyqtSignal(str)
-    finished_signal = pyqtSignal(bool, str, str) # (sukses, pesan, jalur_folder_output)
+    finished_signal = pyqtSignal(bool, str, str)
 
     def __init__(self, primary_folder, additional_folder, parent=None):
         super().__init__(parent)
         self.primary_folder = primary_folder
         self.additional_folder = additional_folder
-        # Direktori dasar output adalah induk dari folder utama
         self.output_base_dir = os.path.dirname(primary_folder)
         self.final_output_folder_path = ""
+
+        self.merged_pairs_count = 0
+        self.skipped_primary_due_to_corruption = 0
+        self.skipped_additional_due_to_corruption = 0
+        self.skipped_primary_no_pair = 0
+        self.skipped_additional_no_pair = 0
+
 
     def _log(self, message):
         """
@@ -76,20 +76,19 @@ class PdfMergerThread(QThread):
         timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
         formatted_message = ""
 
-        # Deteksi judul untuk diberi warna hijau
         if message.startswith("---") and message.endswith("---"):
             formatted_message = f"<span style='color: #00ff00; font-weight: bold;'>[{timestamp}] {message}</span>"
-        # Deteksi pesan file yang dilewati atau pesan error untuk diberi warna merah
         elif ("Melewatkan file utama (tidak ada pasangan" in message or
               "Melewatkan file tambahan (tidak ada pasangan" in message or
               "Ringkasan File Utama yang Dilewati" in message or
               "Ringkasan File Tambahan yang Dilewati" in message or
               "Terjadi Kesalahan Fatal Selama Proses" in message or
-              message.startswith("Error:") # Pesan error umum
+              message.startswith("Error:") or
+              "file PDF rusak" in message or
+              "Ringkasan Proses" in message
               ):
             formatted_message = f"<span style='color: #dc3545;'>[{timestamp}] {message}</span>"
         else:
-            # Warna default untuk pesan lainnya
             formatted_message = f"[{timestamp}] {message}"
             
         self.log_signal.emit(formatted_message)
@@ -102,15 +101,13 @@ class PdfMergerThread(QThread):
             self._log("--- Memulai Proses Penggabungan PDF ---")
             self.status_signal.emit("Memvalidasi folder dan mencari file PDF...")
 
-            # Validasi folder utama
             if not os.path.isdir(self.primary_folder):
                 self._log(f"Error: Folder Utama '{self.primary_folder}' tidak ditemukan atau bukan direktori.")
                 self.finished_signal.emit(False, "Folder Utama tidak ditemukan.", "")
                 return
 
-            # Menyimpan file utama, mengutamakan yang tidak memiliki angka sebagai file "utama" untuk sebuah prefiks
-            primary_files_for_matching = {} # {prefiks_huruf_kecil: jalur_lengkap_ke_file_utama}
-            all_primary_file_paths = set() # Untuk melacak semua file utama untuk ringkasan yang dilewati
+            primary_files_for_matching = {}
+            all_primary_file_paths = set()
 
             self._log(f"Mencari file PDF di Folder Utama: '{self.primary_folder}'...")
             for root, _, files in os.walk(self.primary_folder):
@@ -121,7 +118,6 @@ class PdfMergerThread(QThread):
                         prefix, number, _ = extract_prefix_and_number(file)
                         
                         if prefix not in primary_files_for_matching:
-                            # Jika prefiks belum ada, tambahkan file ini sebagai kandidat utama
                             primary_files_for_matching[prefix] = file_path
                         else:
                             current_candidate_path = primary_files_for_matching[prefix]
@@ -129,15 +125,10 @@ class PdfMergerThread(QThread):
 
                             if number is None and current_candidate_number is not None:
                                 primary_files_for_matching[prefix] = file_path
-                            elif number is not None and current_candidate_number is None:
-                                pass # Pertahankan logika tapi hilangkan log
-                            else:
-                                pass # Pertahankan logika tapi hilangkan log
 
 
-            # Menyimpan file tambahan yang dikelompokkan berdasarkan prefiks, dengan angka yang diekstrak
-            additional_files_by_prefix = {} # {prefiks_huruf_kecil: [{'path': jalur_lengkap, 'number': int_atau_None, 'original_base_name_lower': str}, ...]}
-            all_additional_file_paths = set() # Untuk melacak semua file tambahan untuk ringkasan yang dilewati
+            additional_files_by_prefix = {}
+            all_additional_file_paths = set()
 
             if self.additional_folder and os.path.isdir(self.additional_folder):
                 self._log(f"Mencari file PDF di Folder Tambahan: '{self.additional_folder}'...")
@@ -147,7 +138,6 @@ class PdfMergerThread(QThread):
                             file_path = os.path.join(root, file)
                             all_additional_file_paths.add(file_path)
                             prefix, number, original_base_name_lower = extract_prefix_and_number(file)
-                            # Tambahkan file ke daftar di bawah prefiks yang sesuai
                             additional_files_by_prefix.setdefault(prefix, []).append({
                                 'path': file_path,
                                 'number': number,
@@ -156,9 +146,8 @@ class PdfMergerThread(QThread):
             elif self.additional_folder:
                 self._log(f"Peringatan: Folder Tambahan '{self.additional_folder}' tidak ditemukan atau bukan direktori. Hanya akan memproses file berpasangan jika folder ini ada.")
 
-            # --- Logika Penentuan Pasangan ---
             self._log("--- Menganalisis Pasangan File untuk Penggabungan ---")
-            files_to_merge_pairs = [] # Akan berisi (jalur_file_utama, [daftar_jalur_file_tambahan_terurut])
+            files_to_merge_pairs = []
             merged_primary_paths = set()
             merged_additional_paths = set()
 
@@ -167,8 +156,6 @@ class PdfMergerThread(QThread):
 
                 if matching_additional_files:
                     self._log(f"Menganalisis pasangan untuk prefiks '{primary_prefix}' (File Utama: '{os.path.basename(primary_file_path)}')")
-                    # Urutkan file tambahan: Tanpa nomor (None) pertama, lalu secara numerik
-                    # float('inf') digunakan agar None diurutkan sebagai yang terkecil
                     sorted_additional = sorted(matching_additional_files, key=lambda x: (x['number'] is None, x['number'] if x['number'] is not None else float('inf')))
                     
                     sorted_additional_paths = [ad['path'] for ad in sorted_additional]
@@ -180,8 +167,8 @@ class PdfMergerThread(QThread):
                     self._log(f"Pasangan ditemukan: '{os.path.basename(primary_file_path)}' dengan {len(sorted_additional_paths)} file tambahan.")
                 else:
                     self._log(f"Melewatkan file utama (tidak ada pasangan di folder tambahan untuk prefiks '{primary_prefix}'): '{os.path.basename(primary_file_path)}'")
+                    self.skipped_primary_no_pair += 1
             
-            # Ringkas file yang dilewati
             skipped_primary_files = [os.path.basename(p) for p in all_primary_file_paths if p not in merged_primary_paths]
             skipped_additional_files = [os.path.basename(p) for p in all_additional_file_paths if p not in merged_additional_paths]
 
@@ -189,7 +176,6 @@ class PdfMergerThread(QThread):
             if not files_to_merge_pairs:
                 self._log("Tidak ada pasangan file PDF yang ditemukan untuk digabungkan.")
                 self._log("Pastikan file di Folder Utama memiliki nama depan yang sama dengan file di Folder Tambahan (sebelum '_' atau ' (angka)' atau ' angka').")
-                # Laporkan file yang dilewati jika tidak ada yang diproses sama sekali
                 if skipped_primary_files:
                     self._log("\n--- Ringkasan File Utama yang Dilewati (Tidak Ada Pasangan): ---")
                     for fname in skipped_primary_files:
@@ -202,9 +188,8 @@ class PdfMergerThread(QThread):
                 self.finished_signal.emit(False, "Tidak ada pasangan file yang ditemukan untuk digabungkan.", "")
                 return
 
-            # Buat folder output baru dengan timestamp di direktori induk folder utama
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_folder_name = f"Hasil Penggabungan" # Nama folder
+            timestamp_folder = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_folder_name = f"Hasil Penggabungan"
             self.final_output_folder_path = os.path.join(self.output_base_dir, output_folder_name)
             
             os.makedirs(self.final_output_folder_path, exist_ok=True)
@@ -216,33 +201,51 @@ class PdfMergerThread(QThread):
 
             self._log("--- Memulai Penggabungan Pasangan File ---")
             for primary_file_path, additional_file_paths_list in files_to_merge_pairs:
-                # Nama file output AKAN SELALU sama dengan nama file utama
-                # Kita tidak lagi menambahkan angka dari file tambahan ke nama output.
                 output_filename = os.path.basename(primary_file_path)
                 output_filepath = os.path.join(self.final_output_folder_path, output_filename)
                 
                 merger = PdfWriter()
                 
+                current_pair_merged_successfully = False
+
                 try:
                     self._log(f"Menggabungkan '{os.path.basename(primary_file_path)}' dengan {len(additional_file_paths_list)} file tambahan.")
-                    self._log(f"Nama file output yang direncanakan: '{output_filename}'") # Log ini akan menunjukkan nama file utama saja
+                    self._log(f"Nama file output yang direncanakan: '{output_filename}'")
                     
-                    # Tambahkan file utama terlebih dahulu
-                    merger.append(primary_file_path) 
-                    self._log(f"file utama        : {os.path.basename(primary_file_path)}'")
-                    
-                    # Kemudian tambahkan semua file tambahan yang cocok dan terurut
-                    for ad_path in additional_file_paths_list:
-                        merger.append(ad_path) 
-                        self._log(f"file tambahan     : {os.path.basename(ad_path)}'")
-                    
-                    self._log(f"Menyimpan hasil ke {os.path.basename(output_filepath)}'")
-                    merger.write(output_filepath)
-                    merger.close()
+                    try:
+                        merger.append(primary_file_path)
+                        self._log(f"File utama        : {os.path.basename(primary_file_path)}'")
+                        
+                        for ad_path in additional_file_paths_list:
+                            try:
+                                merger.append(ad_path)
+                                self._log(f"File tambahan     : {os.path.basename(ad_path)}'")
+                            except PdfReadError as pdf_err:
+                                self._log(f"Error: File tambahan '{os.path.basename(ad_path)}' kemungkinan file PDF rusak. Dilewati dari penggabungan ini. ({pdf_err})")
+                                self.skipped_additional_due_to_corruption += 1
+                            except Exception as e:
+                                self._log(f"Error: Gagal membuka file tambahan '{os.path.basename(ad_path)}': {e}. Dilewati dari penggabungan ini.")
+                                self.skipped_additional_due_to_corruption += 1
+                        
+                        self._log(f"Menyimpan hasil ke {os.path.basename(output_filepath)}'")
+                        merger.write(output_filepath)
+                        merger.close()
+                        self.merged_pairs_count += 1
+                        current_pair_merged_successfully = True
 
+                    except PdfReadError as pdf_err:
+                        self._log(f"Error: File utama '{os.path.basename(primary_file_path)}' kemungkinan file PDF rusak. Seluruh pasangan dilewati. ({pdf_err})")
+                        self.skipped_primary_due_to_corruption += 1
+                        merger.close()
+                        
+                    except Exception as e:
+                        self._log(f"Error: Gagal membuka file utama '{os.path.basename(primary_file_path)}': {e}. Seluruh pasangan dilewati.")
+                        self.skipped_primary_due_to_corruption += 1
+                        merger.close()
+                        
                 except Exception as e:
                     self._log(f"Gagal menggabungkan '{os.path.basename(primary_file_path)}' dan pasangannya: {e}. Melewatkan pasangan ini.")
-                    merger.close() # Pastikan merger ditutup meskipun ada error
+                    merger.close()
 
                 processed_count += 1
                 progress = int((processed_count / total_files_to_process) * 100)
@@ -251,20 +254,36 @@ class PdfMergerThread(QThread):
 
             self._log("--- Proses Penggabungan Selesai! ---")
 
-            # --- Ringkasan File yang Dilewati di Akhir ---
+            self.skipped_primary_no_pair = len(primary_files_for_matching) - self.merged_pairs_count - self.skipped_primary_due_to_corruption
+            self.skipped_primary_no_pair = max(0, self.skipped_primary_no_pair)
+
+            self.skipped_additional_no_pair = len(all_additional_file_paths) - len(merged_additional_paths)
+
+            self._log("\n--- Ringkasan Proses ---")
+            self._log(f"Total pasangan berhasil digabungkan: {self.merged_pairs_count}")
+            if self.skipped_primary_no_pair > 0:
+                self._log(f"File Utama dilewati (tidak ada pasangan): {self.skipped_primary_no_pair}")
+            if self.skipped_primary_due_to_corruption > 0:
+                self._log(f"File Utama dilewati (rusak): {self.skipped_primary_due_to_corruption}")
+            if self.skipped_additional_no_pair > 0:
+                self._log(f"File Tambahan dilewati (tidak ada pasangan): {self.skipped_additional_no_pair}")
+            if self.skipped_additional_due_to_corruption > 0:
+                self._log(f"File Tambahan dilewati (rusak): {self.skipped_additional_due_to_corruption}")
+            
             if skipped_primary_files:
-                self._log("\n--- Ringkasan File Utama yang Dilewati (Tidak Ada Pasangan di Folder Tambahan): ---")
+                self._log("\n--- Detail File Utama yang Dilewati (Tidak Ada Pasangan di Folder Tambahan): ---")
                 for fname in skipped_primary_files:
                     self._log(f"- {fname}")
             else:
                 self._log("\nTidak ada file dari Folder Utama yang dilewati karena tidak memiliki pasangan di Folder Tambahan.")
             
             if skipped_additional_files:
-                self._log("\n--- Ringkasan File Tambahan yang Dilewati (Tidak Ada Pasangan di Folder Utama): ---")
+                self._log("\n--- Detail File Tambahan yang Dilewati (Tidak Ada Pasangan di Folder Utama): ---")
                 for fname in skipped_additional_files:
                     self._log(f"- {fname}")
             else:
                 self._log("\nTidak ada file dari Folder Tambahan yang dilewati karena tidak memiliki pasangan di Folder Utama.")
+
 
             self.finished_signal.emit(True, "Penggabungan file PDF berpasangan selesai!", self.final_output_folder_path)
 
@@ -277,12 +296,12 @@ class PdfMergerApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PDF File Merger")
-        self.setGeometry(100, 100, 600, 800) # Ukuran jendela awal
+        self.setGeometry(100, 100, 600, 800)
 
         self.primary_folder = ""
         self.additional_folder = ""
-        self.last_output_folder = "" # Untuk menyimpan jalur folder output terakhir
-        self.merger_thread = None # Referensi ke thread penggabungan
+        self.last_output_folder = ""
+        self.merger_thread = None
 
         self.blink_timer = QTimer(self)
         self.blink_timer.timeout.connect(self.reset_progress_bar_style)
@@ -290,25 +309,17 @@ class PdfMergerApp(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        """
-        Menginisialisasi elemen-elemen antarmuka pengguna (UI).
-        """
-        # --- Set Application Icon ---
-        # Ganti 'icon.ico' dengan nama file ikon Anda.
-        # Pastikan file ikon (misalnya icon.ico atau icon.png) berada di direktori yang sama dengan skrip ini.
-        # Jika menggunakan .png, pastikan PyQt6 dapat membacanya. .ico lebih direkomendasikan untuk Windows.
-        icon_path = 'casemix.ico' 
+        icon_path = 'casemix.ico'
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         else:
             print(f"Peringatan: File ikon tidak ditemukan di {icon_path}. Aplikasi akan menggunakan ikon default.")
-        # --- End Set Application Icon ---
 
         # Gaya CSS untuk aplikasi
         self.setStyleSheet("""
             QWidget {
-                background-color: #1a1a1a; /* Latar belakang gelap */
-                color: #e0e0e0; /* Warna teks terang */
+                background-color: #0a0a0a; /* Super gelap */
+                color: #e0e0e0;
                 font-family: 'Segoe UI', Arial, sans-serif;
                 font-size: 13px;
             }
@@ -317,14 +328,14 @@ class PdfMergerApp(QWidget):
                 font-weight: bold;
             }
             QLineEdit {
-                background-color: #2c2c2c;
-                border: 1px solid #4a4a4a;
+                background-color: #1a1a1a; /* Lebih gelap dari sebelumnya */
+                border: 1px solid #3a3a3a;
                 color: #e0e0e0;
                 padding: 6px;
                 border-radius: 4px;
             }
             QPushButton {
-                background-color: #007bff; /* Warna biru standar */
+                background-color: #007bff;
                 color: white;
                 border: none;
                 padding: 10px 18px;
@@ -333,17 +344,17 @@ class PdfMergerApp(QWidget):
                 font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #0056b3; /* Warna biru lebih gelap saat hover */
+                background-color: #0056b3;
             }
             QPushButton:pressed {
-                background-color: #004085; /* Warna biru paling gelap saat ditekan */
+                background-color: #004085;
             }
             QPushButton:disabled {
-                background-color: #3a3a3a; /* Warna abu-abu saat dinonaktifkan */
+                background-color: #3a3a3a;
                 color: #888888;
             }
             QPushButton#startButton {
-                background-color: #28a745; /* Warna hijau untuk tombol mulai */
+                background-color: #28a745;
             }
             QPushButton#startButton:hover {
                 background-color: #218838;
@@ -352,63 +363,60 @@ class PdfMergerApp(QWidget):
                 background-color: #1e7e34;
             }
             QTextEdit {
-                background-color: #2c2c2c;
-                color: #cccccc; /* Warna teks default untuk log */
-                border: 1px solid #4a4a4a;
+                background-color: #1a1a1a; /* Lebih gelap dari sebelumnya */
+                color: #cccccc;
+                border: 1px solid #3a3a3a;
                 border-radius: 4px;
                 padding: 5px;
                 font-family: 'Consolas', 'Courier New', monospace;
                 font-size: 12px;
             }
             QScrollArea {
-                border: none; /* Hapus border pada area scroll */
+                border: none;
             }
             QScrollBar:vertical {
-                border: 1px solid #3a3a3a;
-                background: #2c2c2c;
+                border: 1px solid #2a2a2a; /* Lebih gelap */
+                background: #1a1a1a; /* Lebih gelap */
                 width: 10px;
                 margin: 0px;
             }
             QScrollBar::handle:vertical {
-                background: #555555;
+                background: #444444; /* Lebih gelap */
                 min-height: 20px;
                 border-radius: 5px;
-                border: none; /* Tambahkan ini agar handle tidak memiliki border */
+                border: none;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 border: none;
                 background: none;
             }
             QProgressBar {
-                /* Bingkai luar progress bar */
-                border: 2px solid #555555; /* Border lebih gelap untuk bingkai */
-                border-radius: 6px; /* Sudut sedikit membulat untuk bingkai */
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #222222, stop:1 #111111); /* Latar belakang industrial gelap */
+                border: 2px solid #3a3a3a; /* Lebih gelap */
+                border-radius: 6px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000); /* Gradien lebih gelap */
                 text-align: center;
                 color: #e0e0e0;
-                height: 25px; /* Tinggi progress bar */
-                font-size: 12px; /* Ukuran font */
+                height: 25px;
+                font-size: 12px;
                 font-weight: bold;
-                margin: 5px; /* Margin dari elemen sekitar */
-                padding: 3px; /* Padding di dalam bingkai luar */
+                margin: 5px;
+                padding: 3px;
             }
 
             QProgressBar::chunk {
-                /* Isi progress bar yang sebenarnya */
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00e0ff, stop:1 #0099ff); /* Gradien biru neon */
-                border-radius: 3px; /* Radius sedikit lebih kecil dari bingkai luar */
-                margin: 2px; /* Menciptakan efek "slot" di dalam */
-                border: 1px solid #0056b3; /* Border biru lebih gelap untuk chunk */
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00e0ff, stop:1 #0099ff);
+                border-radius: 3px;
+                margin: 2px;
+                border: 1px solid #0056b3;
             }
             
-            /* Gaya untuk saat progres menunjukkan error atau reset */
             QProgressBar:disabled::chunk { 
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3a3a3a, stop:1 #2c2c2c); /* Abu-abu lebih gelap saat dinonaktifkan */
-                border: 1px solid #4a4a4a;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2a2a2a, stop:1 #1a1a1a); /* Lebih gelap saat dinonaktifkan */
+                border: 1px solid #3a3a3a;
             }
 
             QMessageBox {
-                background-color: #2b2b2b;
+                background-color: #1b1b1b; /* Lebih gelap */
                 color: #f0f0f0;
             }
             QMessageBox QPushButton {
@@ -426,7 +434,6 @@ class PdfMergerApp(QWidget):
         main_layout = QVBoxLayout()
         self.setLayout(main_layout)
 
-        # Layout untuk pemilihan folder utama
         primary_folder_layout = QHBoxLayout()
         primary_folder_layout.addWidget(QLabel("Folder Utama PDF        :"))
         self.primary_path_display = QLineEdit()
@@ -438,7 +445,6 @@ class PdfMergerApp(QWidget):
         primary_folder_layout.addWidget(self.primary_button)
         main_layout.addLayout(primary_folder_layout)
 
-        # Layout untuk pemilihan folder tambahan
         additional_folder_layout = QHBoxLayout()
         additional_folder_layout.addWidget(QLabel("Folder Tambahan PDF :"))
         self.additional_path_display = QLineEdit()
@@ -450,34 +456,29 @@ class PdfMergerApp(QWidget):
         additional_folder_layout.addWidget(self.additional_button)
         main_layout.addLayout(additional_folder_layout)
 
-        # Layout untuk tombol mulai
         button_layout = QHBoxLayout()
         self.start_button = QPushButton("Mulai Penggabungan PDF")
-        self.start_button.setObjectName("startButton") # Memberi nama objek untuk styling CSS
+        self.start_button.setObjectName("startButton")
         self.start_button.clicked.connect(self.start_merging)
-        self.start_button.setEnabled(False) # Dinonaktifkan secara default
+        self.start_button.setEnabled(False)
         button_layout.addWidget(self.start_button)
         
         main_layout.addLayout(button_layout)
 
-        # --- Progress Bar ---
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(self.progress_bar)
 
-        # --- Label Status ---
         self.status_label = QLabel("Siap untuk memulai. Pilih Folder Utama.")
-        self.status_label.setWordWrap(True) # Memungkinkan teks melengkung jika terlalu panjang
+        self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("font-weight: bold; color: #a0a0a0; margin-top: 5px;")
         main_layout.addWidget(self.status_label)
 
-        # --- Area Tampilan Log ---
         self.log_display = QTextEdit()
-        self.log_display.setReadOnly(True) # Hanya baca
+        self.log_display.setReadOnly(True)
         self.log_display.setPlaceholderText("Log proses akan muncul di sini...")
         self.log_display.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        # Mengatur QTextEdit untuk menerima HTML agar pewarnaan log berfungsi
         self.log_display.setHtml("<html><body style='color:#cccccc; font-family:\"Consolas\", \"Courier New\", monospace; font-size:12px;'></body></html>")
         
         log_scroll_area = QScrollArea()
@@ -485,12 +486,9 @@ class PdfMergerApp(QWidget):
         log_scroll_area.setWidget(self.log_display)
         main_layout.addWidget(log_scroll_area)
 
-        self.update_button_states() # Perbarui status tombol saat UI diinisialisasi
+        self.update_button_states()
 
     def select_primary_folder(self):
-        """
-        Membuka dialog untuk memilih folder utama PDF.
-        """
         folder = QFileDialog.getExistingDirectory(self, "Pilih Folder Utama PDF")
         if folder:
             self.primary_folder = folder
@@ -498,18 +496,12 @@ class PdfMergerApp(QWidget):
             self.update_button_states()
 
     def select_additional_folder(self):
-        """
-        Membuka dialog untuk memilih folder tambahan PDF (opsional).
-        """
         folder = QFileDialog.getExistingDirectory(self, "Pilih Folder Tambahan PDF (Opsional)")
         if folder:
             self.additional_folder = folder
             self.additional_path_display.setText(folder)
 
     def update_button_states(self):
-        """
-        Memperbarui status tombol 'Mulai Penggabungan PDF' berdasarkan apakah folder utama telah dipilih.
-        """
         is_ready = bool(self.primary_folder)
         self.start_button.setEnabled(is_ready)
         
@@ -519,22 +511,15 @@ class PdfMergerApp(QWidget):
             self.status_label.setText("Siap untuk memulai penggabungan.")
 
     def append_log(self, message):
-        """
-        Menambahkan pesan ke area log dan menggulir ke bawah secara otomatis.
-        """
         self.log_display.append(message)
-        # Gulir otomatis ke bawah
         self.log_display.verticalScrollBar().setValue(self.log_display.verticalScrollBar().maximum())
 
     def reset_progress_bar_style(self):
-        """
-        Mereset gaya progress bar ke tampilan default (biru neon).
-        """
         self.progress_bar.setStyleSheet("""
             QProgressBar {
-                border: 2px solid #555555;
+                border: 2px solid #3a3a3a;
                 border-radius: 6px;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #222222, stop:1 #111111);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000);
                 text-align: center;
                 color: #e0e0e0;
                 height: 25px;
@@ -552,46 +537,40 @@ class PdfMergerApp(QWidget):
         """)
 
     def start_merging(self):
-        """
-        Memulai proses penggabungan PDF di thread terpisah.
-        """
         if not self.primary_folder:
             QMessageBox.warning(self, "Input Error", "Silakan pilih Folder Utama PDF.")
             return
             
-        self.log_display.clear() # Bersihkan log dari sesi sebelumnya
+        self.log_display.clear()
         
-        # Inisialisasi thread penggabungan
         self.merger_thread = PdfMergerThread(self.primary_folder, self.additional_folder)
         
-        # Log detail sesi awal
+        self.merger_thread.merged_pairs_count = 0
+        self.merger_thread.skipped_primary_due_to_corruption = 0
+        self.merger_thread.skipped_additional_due_to_corruption = 0
+        self.merger_thread.skipped_primary_no_pair = 0
+
         self.merger_thread._log("--- Memulai Sesi Penggabungan Baru ---")
         self.merger_thread._log(f"Folder Sumber Utama: {self.primary_folder}")
         self.merger_thread._log(f"Folder Sumber Tambahan: {self.additional_folder if self.additional_folder else 'Tidak Dipilih'}")
 
-        # Nonaktifkan tombol selama proses berjalan
         self.start_button.setEnabled(False)
         self.primary_button.setEnabled(False)
         self.additional_button.setEnabled(False)
         self.status_label.setText("Memulai proses penggabungan...")
         self.progress_bar.setValue(0)
 
-        self.reset_progress_bar_style() # Pastikan gaya direset sebelum memulai
-        self.blink_timer.stop() # Hentikan timer berkedip jika aktif
+        self.reset_progress_bar_style()
+        self.blink_timer.stop()
 
-        # Hubungkan sinyal dari thread ke slot UI
         self.merger_thread.progress_signal.connect(self.progress_bar.setValue)
         self.merger_thread.status_signal.connect(self.status_label.setText)
         self.merger_thread.log_signal.connect(self.append_log)
         self.merger_thread.finished_signal.connect(self.on_merging_finished)
-        self.merger_thread.start() # Mulai thread
+        self.merger_thread.start()
         
     def on_merging_finished(self, success, message, output_folder_path):
-        """
-        Dipanggil ketika thread penggabungan selesai.
-        Menampilkan pesan hasil dan mereset UI.
-        """
-        self.blink_timer.stop() # Hentikan berkedip jika dimulai karena error
+        self.blink_timer.stop()
         self.last_output_folder = output_folder_path
 
         if success:
@@ -601,14 +580,13 @@ class PdfMergerApp(QWidget):
             if self.last_output_folder:
                 self.merger_thread._log(f"Output disimpan di: {self.last_output_folder}")
             
-            # Gaya untuk kondisi sukses (teks persentase hijau)
             self.progress_bar.setStyleSheet("""
                 QProgressBar {
-                    border: 2px solid #555555;
+                    border: 2px solid #3a3a3a;
                     border-radius: 6px;
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #222222, stop:1 #111111);
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000);
                     text-align: center;
-                    color: #00ff00; /* Teks persentase berubah jadi hijau saat selesai */
+                    color: #00ff00;
                     height: 25px;
                     font-weight: bold;
                     font-size: 12px;
@@ -616,7 +594,7 @@ class PdfMergerApp(QWidget):
                     padding: 3px;
                 }
                 QProgressBar::chunk {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00e0ff, stop:1 #0099ff); /* Tetap biru */
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00e0ff, stop:1 #0099ff);
                     border-radius: 3px;
                     margin: 2px;
                     border: 1px solid #0056b3;
@@ -627,14 +605,13 @@ class PdfMergerApp(QWidget):
             self.status_label.setText(f"Gagal: {message}")
             self.merger_thread._log(f"--- Proses Gagal: {message} ---")
             
-            # Gaya untuk kondisi gagal (chunk merah)
             self.progress_bar.setStyleSheet("""
                 QProgressBar {
-                    border: 2px solid #555555;
+                    border: 2px solid #3a3a3a;
                     border-radius: 6px;
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #222222, stop:1 #111111);
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000);
                     text-align: center;
-                    color: #dc3545; /* Teks merah untuk gagal */
+                    color: #dc3545;
                     height: 25px;
                     font-weight: bold;
                     font-size: 12px;
@@ -642,19 +619,18 @@ class PdfMergerApp(QWidget):
                     padding: 3px;
                 }
                 QProgressBar::chunk {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #dc3545, stop:1 #c82333); /* Merah untuk gagal */
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #dc3545, stop:1 #c82333);
                     border-radius: 3px;
                     margin: 2px;
-                    border: 1px solid #dc3545; /* Border merah lebih gelap untuk chunk */
+                    border: 1px solid #dc3545;
                 }
             """)
 
-        # Aktifkan kembali tombol setelah proses selesai
         self.start_button.setEnabled(True)
         self.primary_button.setEnabled(True)
-        self.additional_button.setEnabled(True) # Aktifkan kembali tombol folder tambahan juga
+        self.additional_button.setEnabled(True)
 
-# --- Main application execution ---
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = PdfMergerApp()
