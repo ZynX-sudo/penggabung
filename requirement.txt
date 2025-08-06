@@ -1,3 +1,4 @@
 PyQt6
 pyinstaller
 libiconv2.dll
+PyMuPDF
