@@ -4,24 +4,22 @@ import datetime
 import shutil
 import subprocess
 import re
+import time # Import modul time untuk mengukur durasi
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton,
     QLabel, QFileDialog, QLineEdit, QProgressBar, QMessageBox,
-    QHBoxLayout, QTextEdit, QSizePolicy, QScrollArea
+    QHBoxLayout, QTextEdit, QSizePolicy, QScrollArea, QFrame,
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDateTime, QTimer
-from PyQt6.QtGui import QIcon
+
 import fitz  # PyMuPDF
+import qtawesome as qta
 
 # Helper function to extract prefix and number from a filename
 def extract_prefix_and_number(filename):
     """
     Mengekstrak prefiks (nama depan) dan angka urutan dari nama file.
-    Prefiks adalah bagian naama file sebelum pola ' [opsional_karakter](angka)', '_angka',
-    atau ' angka' di akhir.
-    Angka diekstrak dari dalam tanda kurung atau setelah underscore atau setelah spasi.
-    Mengembalikan tuple: (prefiks_huruf_kecil, angka_sebagai_int_atau_None, nama_dasar_asli_huruf_kecil).
     """
     base_name = os.path.splitext(filename)[0]
     base_name_lower = base_name.lower()
@@ -83,18 +81,19 @@ class PdfMergerThread(QThread):
               "Terjadi Kesalahan Fatal Selama Proses" in message or
               message.startswith("Error:") or
               "file PDF rusak" in message or
-              "Ringkasan Proses" in message
-              ):
+              "Ringkasan Proses" in message):
             formatted_message = f"<span style='color: #dc3545;'>[{timestamp}] {message}</span>"
         else:
             formatted_message = f"[{timestamp}] {message}"
-            
+        
         self.log_signal.emit(formatted_message)
 
     def run(self):
         """
         Logika utama untuk mencari, mencocokkan, dan menggabungkan file PDF menggunakan PyMuPDF.
         """
+        start_time = time.time() # Mulai timer
+
         try:
             self._log("--- Memulai Proses Penggabungan PDF ---")
             self.status_signal.emit("Memvalidasi folder dan mencari file PDF...")
@@ -168,7 +167,6 @@ class PdfMergerThread(QThread):
             skipped_primary_files = [os.path.basename(p) for p in all_primary_file_paths if p not in merged_primary_paths]
             skipped_additional_files = [os.path.basename(p) for p in all_additional_file_paths if p not in merged_additional_paths]
 
-
             if not files_to_merge_pairs:
                 self._log("Tidak ada pasangan file PDF yang ditemukan untuk digabungkan.")
                 self._log("Pastikan file di Folder Utama memiliki nama depan yang sama dengan file di Folder Tambahan (sebelum '_' atau ' (angka)' atau ' angka').")
@@ -184,8 +182,7 @@ class PdfMergerThread(QThread):
                 self.finished_signal.emit(False, "Tidak ada pasangan file yang ditemukan untuk digabungkan.", "")
                 return
 
-            timestamp_folder = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_folder_name = f"Hasil Penggabungan"
+            output_folder_name = "Hasil Penggabungan"
             self.final_output_folder_path = os.path.join(self.output_base_dir, output_folder_name)
             
             os.makedirs(self.final_output_folder_path, exist_ok=True)
@@ -197,12 +194,13 @@ class PdfMergerThread(QThread):
 
             self._log("--- Memulai Penggabungan Pasangan File ---")
             for primary_file_path, additional_file_paths_list in files_to_merge_pairs:
+                
                 output_filename = os.path.basename(primary_file_path)
                 output_filepath = os.path.join(self.final_output_folder_path, output_filename)
                 
                 try:
-                    self._log(f"Menggabungkan '{os.path.basename(primary_file_path)}' dengan {len(additional_file_paths_list)} file tambahan.")
-                    self._log(f"Nama file output yang direncanakan: '{output_filename}'")
+                    self._log("----------------------------------------") # Garis putus-putus sebelum penggabungan
+                    self._log(f"Memproses pasangan: '{os.path.basename(primary_file_path)}'")
                     
                     with fitz.open(primary_file_path) as primary_doc:
                         self._log(f"File utama        : {os.path.basename(primary_file_path)}'")
@@ -222,18 +220,27 @@ class PdfMergerThread(QThread):
                         self._log(f"Menyimpan hasil ke {os.path.basename(output_filepath)}'")
                         primary_doc.save(output_filepath, garbage=4, deflate=True, clean=True)
                         self.merged_pairs_count += 1
+                        self._log(f"Penggabungan berhasil: '{output_filename}'")
+                        self._log("----------------------------------------") # Garis putus-putus setelah penggabungan
+                        
 
                 except fitz.FileNotFoundError:
                     self._log(f"Error: File utama '{os.path.basename(primary_file_path)}' tidak ditemukan. Seluruh pasangan dilewati.")
                     self.skipped_primary_due_to_corruption += 1
+                    self._log("----------------------------------------") # Garis putus-putus setelah error
                 except Exception as e:
-                    self._log(f"Error: File utama '{os.path.basename(primary_file_path)}' kemungkinan rusak. Seluruh pasangan dilewati. ({e})")
+                    self._log(f"Error: Terjadi kesalahan tidak terduga saat memproses file '{os.path.basename(primary_file_path)}' atau pasangannya. Pasangan ini dilewati. ({e})")
                     self.skipped_primary_due_to_corruption += 1
+                    self._log("----------------------------------------") # Garis putus-putus setelah error
 
                 processed_count += 1
                 progress = int((processed_count / total_files_to_process) * 100)
                 self.progress_signal.emit(progress)
                 self.status_signal.emit(f"Memproses {processed_count}/{total_files_to_process} pasangan file...")
+
+            end_time = time.time() # Akhiri timer
+            total_duration = end_time - start_time
+            self._log(f"--- Total waktu penggabungan: {total_duration:.2f} detik ---") # Log durasi
 
             self._log("--- Proses Penggabungan Selesai! ---")
             
@@ -274,6 +281,7 @@ class PdfMergerThread(QThread):
             self._log(f"--- Terjadi Kesalahan Fatal Selama Proses: {e} ---")
             self.finished_signal.emit(False, f"Terjadi kesalahan: {e}", "")
 
+
 # PdfMergerApp Class
 class PdfMergerApp(QWidget):
     def __init__(self):
@@ -292,52 +300,51 @@ class PdfMergerApp(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        icon_path = 'casemix.ico'
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
-        else:
-            print(f"Peringatan: File ikon tidak ditemukan di {icon_path}. Aplikasi akan menggunakan ikon default.")
-
         # Gaya CSS untuk aplikasi
         self.setStyleSheet("""
             QWidget {
-                background-color: #0a0a0a; /* Super gelap */
+                background-color: #0a0a0a;
                 color: #e0e0e0;
                 font-family: 'Segoe UI', Arial, sans-serif;
                 font-size: 13px;
             }
+            QFrame#mainFrame {
+                background-color: #1a1a1a;
+                border-radius: 10px;
+                padding: 10px;
+            }
             QLabel {
                 color: #e0e0e0;
                 font-weight: bold;
+                background-color: transparent;
             }
             QLineEdit {
-                background-color: #1a1a1a; /* Lebih gelap dari sebelumnya */
-                border: 1px solid #3a3a3a;
+                background-color: #2b2b2b;
+                border: 1px solid #444444;
                 color: #e0e0e0;
                 padding: 6px;
                 border-radius: 4px;
             }
             QPushButton {
-                background-color: #007bff;
-                color: white;
-                border: none;
-                padding: 10px 18px;
+                background-color: #2b2b2b;
+                border: 1px solid #444444;
                 border-radius: 5px;
-                font-size: 13px;
-                font-weight: 500;
+                padding: 8px;
             }
             QPushButton:hover {
-                background-color: #0056b3;
+                background-color: #444444;
             }
             QPushButton:pressed {
-                background-color: #004085;
+                background-color: #555555;
             }
             QPushButton:disabled {
-                background-color: #3a3a3a;
+                background-color: #1a1a1a;
+                border: 1px solid #333333;
                 color: #888888;
             }
             QPushButton#startButton {
                 background-color: #28a745;
+                border: none;
             }
             QPushButton#startButton:hover {
                 background-color: #218838;
@@ -347,6 +354,7 @@ class PdfMergerApp(QWidget):
             }
             QPushButton#deleteButton {
                 background-color: #dc3545;
+                border: none;
             }
             QPushButton#deleteButton:hover {
                 background-color: #c82333;
@@ -355,9 +363,9 @@ class PdfMergerApp(QWidget):
                 background-color: #bd2130;
             }
             QTextEdit {
-                background-color: #1a1a1a; /* Lebih gelap dari sebelumnya */
+                background-color: #1a1a1a;
                 color: #cccccc;
-                border: 1px solid #3a3a3a;
+                border: 1px solid #444444;
                 border-radius: 4px;
                 padding: 5px;
                 font-family: 'Consolas', 'Courier New', monospace;
@@ -367,13 +375,13 @@ class PdfMergerApp(QWidget):
                 border: none;
             }
             QScrollBar:vertical {
-                border: 1px solid #2a2a2a; /* Lebih gelap */
-                background: #1a1a1a; /* Lebih gelap */
+                border: 1px solid #3a3a3a;
+                background: #2b2b2b;
                 width: 10px;
                 margin: 0px;
             }
             QScrollBar::handle:vertical {
-                background: #444444; /* Lebih gelap */
+                background: #555555;
                 min-height: 20px;
                 border-radius: 5px;
                 border: none;
@@ -386,9 +394,9 @@ class PdfMergerApp(QWidget):
                 background: none;
             }
             QProgressBar {
-                border: 2px solid #3a3a3a; /* Lebih gelap */
+                border: 2px solid #444444;
                 border-radius: 6px;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000); /* Gradien lebih gelap */
+                background: #2b2b2b;
                 text-align: center;
                 color: #e0e0e0;
                 height: 25px;
@@ -397,21 +405,18 @@ class PdfMergerApp(QWidget):
                 margin: 5px;
                 padding: 3px;
             }
-
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00e0ff, stop:1 #0099ff);
                 border-radius: 3px;
                 margin: 2px;
                 border: 1px solid #0056b3;
             }
-            
             QProgressBar:disabled::chunk { 
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2a2a2a, stop:1 #1a1a1a); /* Lebih gelap saat dinonaktifkan */
-                border: 1px solid #3a3a3a;
+                background: #444444;
+                border: 1px solid #555555;
             }
-
             QMessageBox {
-                background-color: #1b1b1b; /* Lebih gelap */
+                background-color: #1b1b1b;
                 color: #f0f0f0;
             }
             QMessageBox QPushButton {
@@ -428,57 +433,81 @@ class PdfMergerApp(QWidget):
 
         main_layout = QVBoxLayout()
         self.setLayout(main_layout)
+        main_frame = QFrame()
+        main_frame.setObjectName("mainFrame")
+        main_layout.addWidget(main_frame)
+        frame_layout = QVBoxLayout(main_frame)
 
+        title_label = QLabel("Penggabungan File PDF Otomatis")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #00e0ff; background: transparent;")
+        frame_layout.addWidget(title_label)
+        
         primary_folder_layout = QHBoxLayout()
-        primary_folder_layout.addWidget(QLabel("Folder Utama PDF        :"))
+        primary_folder_layout.addWidget(QLabel("Folder Utama PDF:      "))
         self.primary_path_display = QLineEdit()
         self.primary_path_display.setReadOnly(True)
         self.primary_path_display.setPlaceholderText("Pilih folder basis file PDF (wajib)...")
         primary_folder_layout.addWidget(self.primary_path_display)
-        self.primary_button = QPushButton("Pilih Folder")
+        self.primary_button = QPushButton(qta.icon('fa5s.folder-open', color='white', scale_factor=1.2), "")
+        self.primary_button.setToolTip("Pilih Folder Utama")
         self.primary_button.clicked.connect(self.select_primary_folder)
         primary_folder_layout.addWidget(self.primary_button)
-        self.delete_primary_button = QPushButton("Hapus Folder")
+        self.delete_primary_button = QPushButton(qta.icon('fa5s.trash-alt', color='white', scale_factor=1.2), "")
         self.delete_primary_button.setObjectName("deleteButton")
+        self.delete_primary_button.setToolTip("Hapus Folder Utama")
         self.delete_primary_button.clicked.connect(self.delete_primary_folder)
         self.delete_primary_button.setEnabled(False)
         primary_folder_layout.addWidget(self.delete_primary_button)
-        main_layout.addLayout(primary_folder_layout)
+        frame_layout.addLayout(primary_folder_layout)
 
         additional_folder_layout = QHBoxLayout()
-        additional_folder_layout.addWidget(QLabel("Folder Tambahan PDF :"))
+        additional_folder_layout.addWidget(QLabel("Folder Tambahan PDF:"))
         self.additional_path_display = QLineEdit()
         self.additional_path_display.setReadOnly(True)
         self.additional_path_display.setPlaceholderText("Pilih folder tambahan (wajib)...")
         additional_folder_layout.addWidget(self.additional_path_display)
-        self.additional_button = QPushButton("Pilih Folder")
+        self.additional_button = QPushButton(qta.icon('fa5s.folder-plus', color='white', scale_factor=1.2), "")
+        self.additional_button.setToolTip("Pilih Folder Tambahan")
         self.additional_button.clicked.connect(self.select_additional_folder)
         additional_folder_layout.addWidget(self.additional_button)
-        self.delete_additional_button = QPushButton("Hapus Folder")
+        self.delete_additional_button = QPushButton(qta.icon('fa5s.trash-alt', color='white', scale_factor=1.2), "")
         self.delete_additional_button.setObjectName("deleteButton")
+        self.delete_additional_button.setToolTip("Hapus Folder Tambahan")
         self.delete_additional_button.clicked.connect(self.delete_additional_folder)
         self.delete_additional_button.setEnabled(False)
         additional_folder_layout.addWidget(self.delete_additional_button)
-        main_layout.addLayout(additional_folder_layout)
+        frame_layout.addLayout(additional_folder_layout)
 
         button_layout = QHBoxLayout()
-        self.start_button = QPushButton("Mulai Penggabungan PDF")
+        self.start_button = QPushButton(qta.icon('fa5s.play-circle', color='white', scale_factor=1.5), "")
         self.start_button.setObjectName("startButton")
+        self.start_button.setToolTip("Mulai Proses Penggabungan")
         self.start_button.clicked.connect(self.start_merging)
         self.start_button.setEnabled(False)
         button_layout.addWidget(self.start_button)
         
-        main_layout.addLayout(button_layout)
+        self.open_output_button = QPushButton(qta.icon('fa5s.folder-open', color='white', scale_factor=1.5), "")
+        self.open_output_button.setToolTip("Buka Folder Hasil Penggabungan")
+        self.open_output_button.clicked.connect(self.open_output_folder)
+        self.open_output_button.setEnabled(False)
+        button_layout.addWidget(self.open_output_button)
+        
+        frame_layout.addLayout(button_layout)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(self.progress_bar)
+        frame_layout.addWidget(self.progress_bar)
 
         self.status_label = QLabel("Siap untuk memulai. Pilih Folder Utama.")
         self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("font-weight: bold; color: #a0a0a0; margin-top: 5px;")
-        main_layout.addWidget(self.status_label)
+        self.status_label.setStyleSheet("font-weight: bold; color: #888888; background: transparent; margin-top: 5px;")
+        frame_layout.addWidget(self.status_label)
+
+        log_label = QLabel("Log Proses:")
+        log_label.setStyleSheet("font-weight: bold; margin-top: 10px; background: transparent;")
+        frame_layout.addWidget(log_label)
 
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
@@ -489,7 +518,7 @@ class PdfMergerApp(QWidget):
         log_scroll_area = QScrollArea()
         log_scroll_area.setWidgetResizable(True)
         log_scroll_area.setWidget(self.log_display)
-        main_layout.addWidget(log_scroll_area)
+        frame_layout.addWidget(log_scroll_area)
 
         self.update_button_states()
 
@@ -567,9 +596,9 @@ class PdfMergerApp(QWidget):
     def reset_progress_bar_style(self):
         self.progress_bar.setStyleSheet("""
             QProgressBar {
-                border: 2px solid #3a3a3a;
+                border: 2px solid #444444;
                 border-radius: 6px;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000);
+                background: #2b2b2b;
                 text-align: center;
                 color: #e0e0e0;
                 height: 25px;
@@ -609,6 +638,7 @@ class PdfMergerApp(QWidget):
         self.additional_button.setEnabled(False)
         self.delete_primary_button.setEnabled(False)
         self.delete_additional_button.setEnabled(False)
+        self.open_output_button.setEnabled(False)
         self.status_label.setText("Memulai proses penggabungan...")
         self.progress_bar.setValue(0)
 
@@ -634,11 +664,11 @@ class PdfMergerApp(QWidget):
             
             self.progress_bar.setStyleSheet("""
                 QProgressBar {
-                    border: 2px solid #3a3a3a;
+                    border: 2px solid #444444;
                     border-radius: 6px;
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000);
+                    background: #2b2b2b;
                     text-align: center;
-                    color: #00ff00;
+                    color: #28a745;
                     height: 25px;
                     font-weight: bold;
                     font-size: 12px;
@@ -646,12 +676,13 @@ class PdfMergerApp(QWidget):
                     padding: 3px;
                 }
                 QProgressBar::chunk {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00e0ff, stop:1 #0099ff);
+                    background: #28a745;
                     border-radius: 3px;
                     margin: 2px;
-                    border: 1px solid #0056b3;
+                    border: 1px solid #218838;
                 }
             """)
+            self.open_output_button.setEnabled(True)
         else:
             QMessageBox.critical(self, "Gagal", message)
             self.status_label.setText(f"Gagal: {message}")
@@ -659,9 +690,9 @@ class PdfMergerApp(QWidget):
             
             self.progress_bar.setStyleSheet("""
                 QProgressBar {
-                    border: 2px solid #3a3a3a;
+                    border: 2px solid #444444;
                     border-radius: 6px;
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111111, stop:1 #000000);
+                    background: #2b2b2b;
                     text-align: center;
                     color: #dc3545;
                     height: 25px;
@@ -671,18 +702,35 @@ class PdfMergerApp(QWidget):
                     padding: 3px;
                 }
                 QProgressBar::chunk {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #dc3545, stop:1 #c82333);
+                    background: #dc3545;
                     border-radius: 3px;
                     margin: 2px;
-                    border: 1px solid #dc3545;
+                    border: 1px solid #c82333;
                 }
             """)
+            self.open_output_button.setEnabled(False)
 
         self.start_button.setEnabled(True)
         self.primary_button.setEnabled(True)
         self.additional_button.setEnabled(True)
         self.delete_primary_button.setEnabled(bool(self.primary_folder))
         self.delete_additional_button.setEnabled(bool(self.additional_folder))
+        
+        self.update_button_states()
+        
+    def open_output_folder(self):
+        if self.last_output_folder and os.path.exists(self.last_output_folder):
+            try:
+                if sys.platform == "win32":
+                    os.startfile(self.last_output_folder)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", self.last_output_folder])
+                else:
+                    subprocess.Popen(["xdg-open", self.last_output_folder])
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Gagal membuka folder output: {e}")
+        else:
+            QMessageBox.warning(self, "Peringatan", "Folder output belum dibuat atau tidak ditemukan.")
 
 
 if __name__ == "__main__":
