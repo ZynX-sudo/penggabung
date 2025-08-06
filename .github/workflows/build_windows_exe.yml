@@ -33,6 +33,7 @@ jobs:
         pip install pyinstaller
         pip install PyQt6
         pip install pypdf
+        pip install PyMuPDF
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Build with PyInstaller # Langkah 4: Menjalankan proses kompilasi PyInstaller
