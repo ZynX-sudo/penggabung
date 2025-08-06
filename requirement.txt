@@ -2,4 +2,4 @@ PyQt6
 pyinstaller
 libiconv2.dll
 qtawesome
-pypdftk
+pymupdf
