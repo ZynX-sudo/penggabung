@@ -44,7 +44,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: PDFMergeTool-Windows-Executables # Nama untuk artefak yang akan Anda unduh
-        path: dist/PDF_File_Merger.exe # Path ke folder .exe yang dihasilkan oleh PyInstaller
+        path: dist/PDF_File_Merger/ # Path ke folder .exe yang dihasilkan oleh PyInstaller
 
     - name: Create GitHub Release # Langkah 6: Membuat Rilis di GitHub (Opsional, tapi disarankan)
       id: create_release
