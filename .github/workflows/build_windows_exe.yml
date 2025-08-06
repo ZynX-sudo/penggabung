@@ -37,7 +37,7 @@ jobs:
 
     - name: Build with PyInstaller # Langkah 4: Menjalankan proses kompilasi PyInstaller
       run: |
-          pyinstaller penggabung.py --onefile --noconsole --windowed --icon="casemix.ico" --name "PDF_File_Merger"
+          pyinstaller penggabung.py --onedir --noconsole --windowed --icon="casemix.ico" --name "PDF_File_Merger"
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Upload executable as Artifact # Langkah 5: Mengunggah folder .exe sebagai "Artifact"
