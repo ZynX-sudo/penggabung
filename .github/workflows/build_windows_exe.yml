@@ -59,4 +59,4 @@ jobs:
           Silakan unduh file executable di bawah.
         draft: false # Bukan rilis draft
         prerelease: false # Bukan rilis pratinjau
-        files: dist/PDF_File_Merger.exe # Melampirkan semua file di dalam folder output ke rilis ini
+        files: dist/PDF_File_Merger/ # Melampirkan semua file di dalam folder output ke rilis ini
