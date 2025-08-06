@@ -12,8 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDateTime, QTimer
 from PyQt6.QtGui import QIcon
-from pypdf import PdfWriter, PdfReader
-from pypdf.errors import PdfReadError
+import fitz  # PyMuPDF
 
 # Helper function to extract prefix and number from a filename
 def extract_prefix_and_number(filename):
@@ -68,7 +67,6 @@ class PdfMergerThread(QThread):
         self.skipped_primary_no_pair = 0
         self.skipped_additional_no_pair = 0
 
-
     def _log(self, message):
         """
         Mengirim pesan log ke UI dengan timestamp dan pewarnaan berdasarkan jenis pesan.
@@ -95,7 +93,7 @@ class PdfMergerThread(QThread):
 
     def run(self):
         """
-        Logika utama untuk mencari, mencocokkan, dan menggabungkan file PDF.
+        Logika utama untuk mencari, mencocokkan, dan menggabungkan file PDF menggunakan PyMuPDF.
         """
         try:
             self._log("--- Memulai Proses Penggabungan PDF ---")
@@ -122,10 +120,8 @@ class PdfMergerThread(QThread):
                         else:
                             current_candidate_path = primary_files_for_matching[prefix]
                             _, current_candidate_number, _ = extract_prefix_and_number(os.path.basename(current_candidate_path))
-
                             if number is None and current_candidate_number is not None:
                                 primary_files_for_matching[prefix] = file_path
-
 
             additional_files_by_prefix = {}
             all_additional_file_paths = set()
@@ -204,48 +200,35 @@ class PdfMergerThread(QThread):
                 output_filename = os.path.basename(primary_file_path)
                 output_filepath = os.path.join(self.final_output_folder_path, output_filename)
                 
-                merger = PdfWriter()
-                
-                current_pair_merged_successfully = False
-
                 try:
                     self._log(f"Menggabungkan '{os.path.basename(primary_file_path)}' dengan {len(additional_file_paths_list)} file tambahan.")
                     self._log(f"Nama file output yang direncanakan: '{output_filename}'")
                     
-                    try:
-                        merger.append(primary_file_path)
+                    with fitz.open(primary_file_path) as primary_doc:
                         self._log(f"File utama        : {os.path.basename(primary_file_path)}'")
                         
                         for ad_path in additional_file_paths_list:
                             try:
-                                merger.append(ad_path)
-                                self._log(f"File tambahan     : {os.path.basename(ad_path)}'")
-                            except PdfReadError as pdf_err:
-                                self._log(f"Error: File tambahan '{os.path.basename(ad_path)}' kemungkinan file PDF rusak. Dilewati dari penggabungan ini. ({pdf_err})")
+                                with fitz.open(ad_path) as ad_doc:
+                                    primary_doc.insert_pdf(ad_doc)
+                                    self._log(f"File tambahan     : {os.path.basename(ad_path)}'")
+                            except fitz.FileNotFoundError:
+                                self._log(f"Error: File tambahan '{os.path.basename(ad_path)}' tidak ditemukan. Dilewati.")
                                 self.skipped_additional_due_to_corruption += 1
                             except Exception as e:
-                                self._log(f"Error: Gagal membuka file tambahan '{os.path.basename(ad_path)}': {e}. Dilewati dari penggabungan ini.")
+                                self._log(f"Error: File tambahan '{os.path.basename(ad_path)}' kemungkinan rusak. Dilewati. ({e})")
                                 self.skipped_additional_due_to_corruption += 1
                         
                         self._log(f"Menyimpan hasil ke {os.path.basename(output_filepath)}'")
-                        merger.write(output_filepath)
-                        merger.close()
+                        primary_doc.save(output_filepath, garbage=4, deflate=True, clean=True)
                         self.merged_pairs_count += 1
-                        current_pair_merged_successfully = True
 
-                    except PdfReadError as pdf_err:
-                        self._log(f"Error: File utama '{os.path.basename(primary_file_path)}' kemungkinan file PDF rusak. Seluruh pasangan dilewati. ({pdf_err})")
-                        self.skipped_primary_due_to_corruption += 1
-                        merger.close()
-                        
-                    except Exception as e:
-                        self._log(f"Error: Gagal membuka file utama '{os.path.basename(primary_file_path)}': {e}. Seluruh pasangan dilewati.")
-                        self.skipped_primary_due_to_corruption += 1
-                        merger.close()
-                        
+                except fitz.FileNotFoundError:
+                    self._log(f"Error: File utama '{os.path.basename(primary_file_path)}' tidak ditemukan. Seluruh pasangan dilewati.")
+                    self.skipped_primary_due_to_corruption += 1
                 except Exception as e:
-                    self._log(f"Gagal menggabungkan '{os.path.basename(primary_file_path)}' dan pasangannya: {e}. Melewatkan pasangan ini.")
-                    merger.close()
+                    self._log(f"Error: File utama '{os.path.basename(primary_file_path)}' kemungkinan rusak. Seluruh pasangan dilewati. ({e})")
+                    self.skipped_primary_due_to_corruption += 1
 
                 processed_count += 1
                 progress = int((processed_count / total_files_to_process) * 100)
@@ -253,7 +236,7 @@ class PdfMergerThread(QThread):
                 self.status_signal.emit(f"Memproses {processed_count}/{total_files_to_process} pasangan file...")
 
             self._log("--- Proses Penggabungan Selesai! ---")
-
+            
             self.skipped_primary_no_pair = len(primary_files_for_matching) - self.merged_pairs_count - self.skipped_primary_due_to_corruption
             self.skipped_primary_no_pair = max(0, self.skipped_primary_no_pair)
 
@@ -362,6 +345,15 @@ class PdfMergerApp(QWidget):
             QPushButton#startButton:pressed {
                 background-color: #1e7e34;
             }
+            QPushButton#deleteButton {
+                background-color: #dc3545;
+            }
+            QPushButton#deleteButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton#deleteButton:pressed {
+                background-color: #bd2130;
+            }
             QTextEdit {
                 background-color: #1a1a1a; /* Lebih gelap dari sebelumnya */
                 color: #cccccc;
@@ -388,6 +380,9 @@ class PdfMergerApp(QWidget):
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 border: none;
+                background: none;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
                 background: none;
             }
             QProgressBar {
@@ -443,6 +438,11 @@ class PdfMergerApp(QWidget):
         self.primary_button = QPushButton("Pilih Folder")
         self.primary_button.clicked.connect(self.select_primary_folder)
         primary_folder_layout.addWidget(self.primary_button)
+        self.delete_primary_button = QPushButton("Hapus Folder")
+        self.delete_primary_button.setObjectName("deleteButton")
+        self.delete_primary_button.clicked.connect(self.delete_primary_folder)
+        self.delete_primary_button.setEnabled(False)
+        primary_folder_layout.addWidget(self.delete_primary_button)
         main_layout.addLayout(primary_folder_layout)
 
         additional_folder_layout = QHBoxLayout()
@@ -454,6 +454,11 @@ class PdfMergerApp(QWidget):
         self.additional_button = QPushButton("Pilih Folder")
         self.additional_button.clicked.connect(self.select_additional_folder)
         additional_folder_layout.addWidget(self.additional_button)
+        self.delete_additional_button = QPushButton("Hapus Folder")
+        self.delete_additional_button.setObjectName("deleteButton")
+        self.delete_additional_button.clicked.connect(self.delete_additional_folder)
+        self.delete_additional_button.setEnabled(False)
+        additional_folder_layout.addWidget(self.delete_additional_button)
         main_layout.addLayout(additional_folder_layout)
 
         button_layout = QHBoxLayout()
@@ -500,13 +505,58 @@ class PdfMergerApp(QWidget):
         if folder:
             self.additional_folder = folder
             self.additional_path_display.setText(folder)
+            self.update_button_states()
+
+    def delete_primary_folder(self):
+        if not self.primary_folder or not os.path.isdir(self.primary_folder):
+            QMessageBox.warning(self, "Error", "Folder Utama tidak valid atau tidak ada.")
+            return
+
+        reply = QMessageBox.question(self, 'Konfirmasi Hapus',
+                                     f"Anda yakin ingin menghapus folder ini dan semua isinya:\n\n{self.primary_folder}\n\nTindakan ini tidak dapat dibatalkan!",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                shutil.rmtree(self.primary_folder)
+                QMessageBox.information(self, "Berhasil", f"Folder '{self.primary_folder}' berhasil dihapus.")
+                self.primary_folder = ""
+                self.primary_path_display.clear()
+                self.update_button_states()
+            except OSError as e:
+                QMessageBox.critical(self, "Gagal", f"Gagal menghapus folder '{self.primary_folder}':\n{e}")
+
+    def delete_additional_folder(self):
+        if not self.additional_folder or not os.path.isdir(self.additional_folder):
+            QMessageBox.warning(self, "Error", "Folder Tambahan tidak valid atau tidak ada.")
+            return
+
+        reply = QMessageBox.question(self, 'Konfirmasi Hapus',
+                                     f"Anda yakin ingin menghapus folder ini dan semua isinya:\n\n{self.additional_folder}\n\nTindakan ini tidak dapat dibatalkan!",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                shutil.rmtree(self.additional_folder)
+                QMessageBox.information(self, "Berhasil", f"Folder '{self.additional_folder}' berhasil dihapus.")
+                self.additional_folder = ""
+                self.additional_path_display.clear()
+                self.update_button_states()
+            except OSError as e:
+                QMessageBox.critical(self, "Gagal", f"Gagal menghapus folder '{self.additional_folder}':\n{e}")
 
     def update_button_states(self):
-        is_ready = bool(self.primary_folder)
-        self.start_button.setEnabled(is_ready)
+        is_primary_ready = bool(self.primary_folder)
+        is_additional_ready = bool(self.additional_folder)
         
-        if not is_ready:
+        self.start_button.setEnabled(is_primary_ready)
+        self.delete_primary_button.setEnabled(is_primary_ready)
+        self.delete_additional_button.setEnabled(is_additional_ready)
+        
+        if not is_primary_ready:
             self.status_label.setText("Pilih Folder Utama untuk memulai.")
+        elif not is_additional_ready:
+            self.status_label.setText("Folder Tambahan tidak dipilih. Hanya akan memproses file utama yang memiliki pasangan di Folder Utama.")
         else:
             self.status_label.setText("Siap untuk memulai penggabungan.")
 
@@ -557,6 +607,8 @@ class PdfMergerApp(QWidget):
         self.start_button.setEnabled(False)
         self.primary_button.setEnabled(False)
         self.additional_button.setEnabled(False)
+        self.delete_primary_button.setEnabled(False)
+        self.delete_additional_button.setEnabled(False)
         self.status_label.setText("Memulai proses penggabungan...")
         self.progress_bar.setValue(0)
 
@@ -629,6 +681,8 @@ class PdfMergerApp(QWidget):
         self.start_button.setEnabled(True)
         self.primary_button.setEnabled(True)
         self.additional_button.setEnabled(True)
+        self.delete_primary_button.setEnabled(bool(self.primary_folder))
+        self.delete_additional_button.setEnabled(bool(self.additional_folder))
 
 
 if __name__ == "__main__":
