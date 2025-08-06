@@ -32,7 +32,6 @@ jobs:
         pip install -r requirement.txt
         pip install pyinstaller
         pip install PyQt6
-        pip install pypdf
         pip install pypdftk
         pip install qtawesome
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
