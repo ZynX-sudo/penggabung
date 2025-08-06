@@ -32,14 +32,13 @@ jobs:
         pip install -r requirement.txt
         pip install pyinstaller
         pip install PyQt6
-        pip install pypdftk
+        pip install pymupdf
         pip install qtawesome
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Build with PyInstaller # Langkah 4: Menjalankan proses kompilasi PyInstaller
       run: |
-        pyinstaller penggabung.py --onedir --noconsole --windowed --icon="casemix.ico" --name "PDF_File_Merger" ^
-        --add-binary "pdftk.exe;." --add-binary "libiconv2.dll;."
+        pyinstaller penggabung.py --onedir --noconsole --windowed --icon="casemix.ico" --name "PDF_File_Merger" ^        
       shell: cmd # Menggunakan CMD untuk menghindari masalah parsing
 
     - name: Upload executable as Artifact # Langkah 5: Mengunggah folder .exe sebagai "Artifact"
